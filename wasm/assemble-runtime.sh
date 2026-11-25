@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p build/guest web/runtime/vendor build/browser-tools
-docker build --output type=local,dest=build/guest wasm/guest
+docker build --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
 cp build/guest/{vmlinux,initramfs.cpio.gz} web/runtime/
 cp build/wasm-mips/{out.js,qemu-system-mipsel.wasm,qemu-system-mipsel.worker.js,manifest.json,COPYING} web/runtime/
 npm install --prefix build/browser-tools --no-audit --no-fund xterm@5.3.0 xterm-pty@0.10.1 playwright@1.51.1
