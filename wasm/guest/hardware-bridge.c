@@ -67,7 +67,8 @@ static void broadcast(int d,const unsigned char *p,size_t n) {
 }
 int main(int argc,char **argv) {
     if(argc!=2)return 2;
-    int fd=atoi(argv[1]);
+    int shared=strcmp(argv[1],"shared")==0;
+    int fd=shared?-1:atoi(argv[1]);
     signal(SIGPIPE,SIG_IGN);
     mkdir("/tmp/q2emu",0755);
     for(int d=0;d<4;d++) {
@@ -85,7 +86,18 @@ int main(int argc,char **argv) {
     for(;;) {
         accept_clients();
         struct pollfd p={fd,POLLIN,0};
-        int result=poll(&p,1,100);
+        int result=poll(&p,1,shared?30:100);
+        if(shared) {
+            int input=open("/tmp/q2bridge/input",O_RDONLY);
+            if(input>=0) {
+                unsigned char h[3], data[1024];
+                if(!full(input,h,3,0)) {
+                    unsigned n=h[1]|(h[2]<<8);
+                    if(h[0]>=1&&h[0]<=4&&n&&n<=sizeof(data)&&n%16==0&&!full(input,data,n,0)) broadcast(h[0]-1,data,n);
+                }
+                close(input); unlink("/tmp/q2bridge/input");
+            }
+        }
         if(result<0 && errno!=EINTR)return 1;
         if(result>0 && (p.revents&POLLIN)) {
             unsigned char h[3], data[1024];
@@ -102,7 +114,13 @@ int main(int argc,char **argv) {
         memcpy(snapshot,map+page*FRAME,FRAME);
         if(first||blank!=lastblank||memcmp(previous,snapshot,FRAME)) {
             unsigned char h[5]={'Q','2','F','1',(unsigned char)blank};
-            if(full(fd,h,sizeof(h),1)||full(fd,snapshot,FRAME,1))return 1;
+            if(shared) {
+                int output=open("/tmp/q2bridge/frame.tmp",O_WRONLY|O_CREAT|O_TRUNC,0644);
+                if(output<0){perror("frame open");return 1;}
+                int failed=full(output,h,sizeof(h),1)||full(output,snapshot,FRAME,1);
+                close(output);
+                if(failed||rename("/tmp/q2bridge/frame.tmp","/tmp/q2bridge/frame")){perror("frame publish");return 1;}
+            } else if(full(fd,h,sizeof(h),1)||full(fd,snapshot,FRAME,1))return 1;
             memcpy(previous,snapshot,FRAME);
             first=0;lastblank=blank;
         }
