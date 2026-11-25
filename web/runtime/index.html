@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Q2 MIPS runtime laboratory</title><link rel="stylesheet" href="vendor/xterm.css"><style>body{font:16px system-ui;margin:24px;background:#15191e;color:#eee}a{color:#a9e3c8}button,input{font:inherit;margin:8px 0}#terminal{height:480px;border:1px solid #455;padding:8px}#status{white-space:pre-wrap}label{display:block}</style></head>
+<body><a href="../">Q2 Emulator</a><h1>MIPS runtime laboratory</h1><p>Experimental 128 MB Malta Linux guest. This is a serial-console test, not a fully functional Q2 player.</p><p id="status" role="status">Checking browser capabilities…</p><label>Optional firmware (raw rootfs.squashfs or uncompressed update.tar)<input type="file" id="firmware" accept=".squashfs,.tar"></label><label><input type="checkbox" id="launch"> Attempt firmware demo in guest (diagnostic only; no hardware shim)</label><button id="start" disabled>Boot Linux</button><button id="reset" disabled>Reset session</button><button id="download-log">Download session log</button><div id="terminal" aria-label="Serial terminal"></div><script src="vendor/xterm.js"></script><script src="vendor/xterm-pty.js"></script><script type="module">
+const status=document.getElementById('status');
+try {
+  if (!crossOriginIsolated) {
+    if (!navigator.serviceWorker) throw new Error('Service worker unavailable; use HTTPS or localhost');
+    status.textContent='Preparing browser isolation…';
+    await navigator.serviceWorker.register('./coi-sw.js');
+    await navigator.serviceWorker.ready;
+    if(sessionStorage.getItem('q2-isolation-reloaded')) throw new Error('Isolation did not activate. Close this tab and reopen, or use the Docker server.');
+    sessionStorage.setItem('q2-isolation-reloaded','1');
+    location.reload();
+  } else {
+    sessionStorage.removeItem('q2-isolation-reloaded');
+    await import('./boot.js');
+  }
+} catch(e) {status.textContent='Initialization failed: '+e.message;console.error(e);}
+</script></body></html>
