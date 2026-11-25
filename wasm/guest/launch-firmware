@@ -44,6 +44,15 @@ for name in mcu shanling_dac input/event1 input/event2 input/event3 input/event4
     rm -f "$root/dev/$name"
     touch "$root/dev/$name"
 done
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2sd "$root/mnt/mmc" || fail "Virtual SD mount failed"
+for name in mmcblk4 mmcblk4p0 mmcblk4p1 mmcblk4p2 mmcblk4p3 mmcblk4p4 mmcblk4p5 mmcblk4p6 mmcblk4p7 mmcblk4p8 mmcblk4p9; do
+    rm -f "$root/dev/$name"
+    touch "$root/dev/$name"
+done
+touch "$root/tmp/mmc_add"
+log SD "Virtual SD mounted at /mnt/mmc"
+df -k "$root/mnt/mmc" || true
+echo Q2_SD_READY
 log DEVICES "Framebuffer and device stand-ins created"
 [ -f /q2/libq2emu.so ] || fail "Prebuilt shim missing"
 cp /q2/libq2emu.so "$root/lib/libq2emu.so"
