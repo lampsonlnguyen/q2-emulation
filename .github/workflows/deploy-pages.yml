@@ -60,7 +60,9 @@ jobs:
             test -s _runtime/audio.js
             test -s _runtime/player.css
             test -s _runtime/vendor/fflate.mjs
-            cp -R _runtime/. _site/runtime/
+            # Keep current checkout HTML, CSS and JS; only copy generated dependencies.
+            mkdir -p _site/runtime/vendor
+            cp _runtime/vendor/fflate.mjs _site/runtime/vendor/
           fi
           mkdir -p _site/runtime/vendor
           for name in out.js qemu-system-mipsel.wasm qemu-system-mipsel.worker.js vmlinux initramfs.cpio.gz manifest.json COPYING; do
