@@ -7,7 +7,8 @@ const path = name => new URL(name, base).href;
 const start = el('start');
 const reset = el('reset');
 const fileInput = el('firmware');
-let sdFiles=[], settingsFiles=[], runtimeFS=null, storageReady=false, storageBusy=false;
+let sdFiles=[], settingsFiles=[], runtimeFS=null, storageReady=false, storageBusy=false, running=false, stopHardware=null, autosaveTimer=null;
+let storageTask=null;
 const sdStatus=()=>{el('sd-status').textContent=sdFiles.length+' files, '+Math.round(sdFiles.reduce((n,f)=>n+f.bytes.byteLength,0)/1024)+' KiB saved locally';};
 const storageInit=Promise.all([loadFiles(),loadSettings()]).then(([files,settings])=>{sdFiles=files;settingsFiles=settings;storageReady=true;sdStatus();}).catch(e=>{log('STORAGE_ERROR',e.message);el('sd-status').textContent=e.message;});
 for(const id of ['sd-files','sd-folder'])el(id).onchange=async e=>{
@@ -16,7 +17,32 @@ for(const id of ['sd-files','sd-folder'])el(id).onchange=async e=>{
   try{const next=await importFiles(sdFiles,e.target.files);await saveFiles(next);sdFiles=next;sdStatus();log('SD_IMPORT',sdFiles.length+' files');}catch(error){log('STORAGE_ERROR',error.message);el('sd-status').textContent=error.message;}finally{storageBusy=false;e.target.value='';}
 };
 el('sd-clear').onclick=async()=>{if(start.disabled||storageBusy||!storageReady)return;if(!confirm('Delete all saved SD files?'))return;storageBusy=true;try{await saveFiles([]);sdFiles=[];sdStatus();}catch(e){log('STORAGE_ERROR',e.message);}finally{storageBusy=false;}};
-el('sd-save').onclick=async()=>{if(!runtimeFS||storageBusy)return;storageBusy=true;try{const next=snapshot(runtimeFS,'/q2sd');await saveFiles(next);await saveSettings(snapshot(runtimeFS,'/q2settings'));sdFiles=next;sdStatus();log('SD_SAVE','Saved snapshot; guest writes should be idle');}catch(e){log('STORAGE_ERROR',e.message);}finally{storageBusy=false;}};
+async function saveSession(reason){
+  if(storageTask)return storageTask;
+  if(!runtimeFS)return true;
+  storageBusy=true;
+  storageTask=(async()=>{
+    try{
+      const next=snapshot(runtimeFS,'/q2sd'), settings=snapshot(runtimeFS,'/q2settings');
+      await saveFiles(next);await saveSettings(settings);
+      sdFiles=next;settingsFiles=settings;sdStatus();log('SESSION_SAVE',reason+' (live filesystem snapshot)');return true;
+    }catch(e){log('STORAGE_ERROR',e.message);return false;}
+    finally{storageBusy=false;storageTask=null;}
+  })();
+  return storageTask;
+}
+el('sd-save').onclick=()=>saveSession('manual');
+async function endSession(restart){
+  if(runtimeFS && !await saveSession(restart?'restart':'stop') && !confirm('Save failed. Discard unsaved guest changes?'))return;
+  if(autosaveTimer)clearInterval(autosaveTimer);
+  if(stopHardware)stopHardware();
+  running=false;
+  // Navigation destroys the WASM instance and its pthread workers.
+  location.href=restart?location.href:location.pathname;
+}
+el('stop').onclick=()=>endSession(false);
+reset.onclick=()=>endSession(true);
+window.addEventListener('beforeunload',e=>{if(running&&runtimeFS){e.preventDefault();e.returnValue='';}});
 el('sd-export').onclick=async()=>{try{const {zipSync}=await import('./vendor/fflate.mjs');const files=runtimeFS?snapshot(runtimeFS,'/q2sd'):sdFiles;const zip=zipSync(Object.fromEntries(files.map(f=>[f.name,f.bytes])),{level:0});const url=URL.createObjectURL(new Blob([zip],{type:'application/zip'}));const a=document.createElement('a');a.href=url;a.download='q2-sd.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){log('STORAGE_ERROR',e.message);}};
 const terminal = new Terminal({ convertEol: true, cols: 80, rows: 24, scrollback: 10000 });
 terminal.open(el('terminal'));
@@ -66,10 +92,12 @@ function extractSquashfs(bytes) {
   throw new Error('No recovery-update/rootfs.squashfs in archive');
 }
 start.addEventListener('click', async () => {
-  if(storageBusy)return;
-  await storageInit;
+  if(storageBusy||running)return;
   start.disabled = true;
+  running=true;
+  await storageInit;
   reset.disabled = false;
+  el('stop').disabled=false;
   try {
     status('Loading QEMU and Linux guest…');
     const [kernel, initrd] = await Promise.all([get('vmlinux'), get('initramfs.cpio.gz')]);
@@ -98,7 +126,7 @@ start.addEventListener('click', async () => {
     window.Module = config;
     const instance = await initModule(config);
     log('WASM','Module initialized');
-    if (launch) {connectHardware(instance.FS);runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');}
+    if (launch) {stopHardware=connectHardware(instance.FS);runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
     const oldPoll = instance.TTY.stream_ops.poll;
     instance.TTY.stream_ops.poll = function(stream, timeout) {
       if (!slave.readable) return slave.writable ? 4 : 0;
@@ -110,7 +138,7 @@ start.addEventListener('click', async () => {
     console.error(error);
   }
 });
-reset.addEventListener('click', () => location.reload());
+
 if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
   status('Cross-origin isolation is unavailable. Use localhost Docker or an HTTPS host with COOP/COEP headers.');
 } else {
