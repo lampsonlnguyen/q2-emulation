@@ -1,4 +1,7 @@
 name: Experimental MIPS WASM
+concurrency:
+  group: mips-wasm-${{ github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches: ['web/m2-mips-wasm']
@@ -22,6 +25,12 @@ jobs:
       JOBS: '2'
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Docker hosting configuration before compilation
+        run: |
+          test -s compose.web.yml
+          test -s web/Dockerfile
+          test -s web/nginx.conf
+          docker compose -f compose.web.yml config --quiet
       - name: Build MIPS system emulator
         run: bash wasm/build-mips.sh
       - name: Upload experimental runtime
@@ -60,6 +69,8 @@ jobs:
       - name: Stop test server
         if: always()
         run: |
-          docker compose -f compose.web.yml ps -a
-          docker compose -f compose.web.yml logs --no-color
-          docker compose -f compose.web.yml down
+          if [ -f compose.web.yml ]; then
+            docker compose -f compose.web.yml ps -a || true
+            docker compose -f compose.web.yml logs --no-color || true
+            docker compose -f compose.web.yml down
+          fi
