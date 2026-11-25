@@ -23,6 +23,9 @@ mkdir -p /mnt/q2-write/upper /mnt/q2-write/work
 mount -t overlay overlay -o lowerdir="$lower",upperdir=/mnt/q2-write/upper,workdir=/mnt/q2-write/work "$root" || fail "overlay mount failed"
 log OVERLAY "Writable ephemeral firmware filesystem ready"
 [ -x "$root/release/bin/demo" ] || fail "demo executable not found"
+# Opening the binary for writing triggers OverlayFS copy-up before patching.
+backlight=$(/bin/firmware-patch "$root/release/bin/demo") || fail "Firmware compatibility patch failed"
+log PATCH "Serial gate patched; backlight symbol $backlight"
 log ABI "Firmware ELF header (first 52 bytes):"
 od -An -tx1 -N52 "$root/release/bin/demo"
 log ABI "Guest CPU and memory:"
@@ -59,7 +62,20 @@ cp /q2/libq2emu.so "$root/lib/libq2emu.so"
 cp /q2/hardware-bridge "$root/tmp/q2emu/hardware-bridge"
 mkdir -p "$root/usr/share/alsa/alsa.conf.d"
 printf 'pcm.!default { type null }\n' > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf"
-log SHIM "Installed prebuilt firmware shim; ABI compatibility not assumed"
+# Stand-ins mirror desktop behavior for absent hardware. Only replace the guest copy.
+standin() {
+    path="$root/$1"
+    shift
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        mv "$path" "$path.q2emu-orig"
+        printf '#!/bin/sh\n%s\n' "$*" > "$path"
+        chmod 755 "$path"
+    fi
+}
+standin usr/bin/checkappprocess.sh 'while :; do sleep 3600; done'
+standin usr/bin/rtk_hciattach 'touch /tmp/rtk_init_success; while :; do sleep 3600; done'
+standin usr/bin/hciconfig 'exit 0'
+log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 mkdir -p "$root/tmp/q2bridge"
 mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
 chroot "$root" /tmp/q2emu/hardware-bridge shared &
@@ -72,7 +88,7 @@ echo Q2_BRIDGE_READY
 log DEMO "Launching firmware with LD_PRELOAD"
 echo Q2_DEMO_ATTEMPT
 set +e
-chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo'
+Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo'
 result=$?
 set -e
 log DEMO "Exit status $result"
