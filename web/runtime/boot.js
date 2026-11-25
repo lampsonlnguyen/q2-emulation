@@ -63,7 +63,7 @@ start.addEventListener('click', async () => {
     const firmware = selected ? extractSquashfs(new Uint8Array(await selected.arrayBuffer())) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nographic','-monitor','none','-nic','none','-accel','tcg,tb-size=32','-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0 rdinit=/init panic=-1' + (launch ? ' q2.launch=1' : '')];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,tb-size=32','-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0 rdinit=/init panic=-1' + (launch ? ' q2.launch=1' : '')];
     if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
     const { default: initModule } = await import('./out.js');
     const config = { arguments: args, pty: slave, mainScriptUrlOrBlob: path('out.js'), locateFile: name => path(name), preRun: [module => {
