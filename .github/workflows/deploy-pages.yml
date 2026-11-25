@@ -5,6 +5,10 @@ on:
     paths: ['web/**', 'docs/*.png', '.github/workflows/deploy-pages.yml']
   workflow_dispatch:
     inputs:
+      integrated_preview:
+        description: 'Deploy integrated hardware branch artifact instead of Linux-only preview'
+        type: boolean
+        default: false
       runtime_run_id:
         description: 'Trusted QEMU runtime build run ID (experimental)'
         required: false
@@ -29,8 +33,11 @@ jobs:
           run-id: ${{ inputs.runtime_run_id || '45588124143' }}
           github-token: ${{ github.token }}
           path: _runtime
+      - name: Require integrated artifact when requested
+        if: inputs.integrated_preview && steps.runtime.outcome == 'failure'
+        run: exit 1
       - name: Checkout reproducible runtime source if artifact expired
-        if: steps.runtime.outcome == 'failure'
+        if: steps.runtime.outcome == 'failure' && !inputs.integrated_preview
         uses: actions/checkout@v4
         with:
           ref: 3b81f5ac21de5eb74096a363782df0d925b2a8d5
@@ -47,6 +54,8 @@ jobs:
           mkdir -p ../_runtime
           cp -R web/runtime/. ../_runtime/
       - name: Prepare static site
+        env:
+          INTEGRATED: ${{ inputs.integrated_preview || false }}
         run: |
           set -eu
           mkdir -p _site/assets
@@ -55,6 +64,14 @@ jobs:
             test -s "docs/$name.png"
             cp "docs/$name.png" _site/assets/
           done
+          if [ "$INTEGRATED" = true ]; then
+            test -s _runtime/session.js
+            test -s _runtime/storage.js
+            test -s _runtime/audio.js
+            test -s _runtime/player.css
+            test -s _runtime/vendor/fflate.mjs
+            cp -R _runtime/. _site/runtime/
+          fi
           mkdir -p _site/runtime/vendor
           for name in out.js qemu-system-mipsel.wasm qemu-system-mipsel.worker.js vmlinux initramfs.cpio.gz manifest.json COPYING; do
             test -s "_runtime/$name"
