@@ -81,9 +81,38 @@ standin usr/bin/hciconfig 'exit 0'
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 mkdir -p "$root/tmp/q2bridge"
 mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
+if grep -qw q2.audio=1 /proc/cmdline; then
+    # The ALSA file plugin writes raw samples to a FIFO; a capped relay publishes PCM.
+    mkfifo "$root/tmp/q2emu/audio.fifo"
+    cat > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf" <<'EOF'
+pcm.q2capture {
+    type file
+    slave.pcm "null"
+    file "/tmp/q2emu/audio.fifo"
+    format "raw"
+}
+pcm.!default {
+    type plug
+    slave {
+        pcm "q2capture"
+        format S16_LE
+        rate 44100
+        channels 2
+    }
+}
+EOF
+    (
+        while :; do
+            /q2/audio-relay "$root/tmp/q2emu/audio.fifo" "$root/tmp/q2bridge/audio.pcm"
+            sleep 1
+        done
+    ) &
+    audio_pid=$!
+    log AUDIO "Experimental default ALSA PCM capture enabled"
+fi
 chroot "$root" /tmp/q2emu/hardware-bridge shared &
 bridge=$!
-trap 'kill "$bridge" 2>/dev/null || true' EXIT
+trap 'kill "$bridge" ${audio_pid:-} 2>/dev/null || true' EXIT
 log BRIDGE "Shared-directory bridge PID $bridge"
 sleep 1
 kill -0 "$bridge" || fail "hardware bridge exited"
