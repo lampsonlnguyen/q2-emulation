@@ -6,7 +6,9 @@ page.on('console', message => console.log('browser:', message.text()));
 let runtimeError = null;
 page.on('pageerror', error => {runtimeError = error;console.error('pageerror:', error);});
 try {
-  await page.goto('http://127.0.0.1:8080/runtime/');
+  const clock=process.env.Q2_CLOCK_PROFILE||'normal';
+  await page.goto('http://127.0.0.1:8080/runtime/?clock='+encodeURIComponent(clock));
+  console.log('Clock profile:',clock);
   assert.equal(await page.evaluate(() => crossOriginIsolated), true);
   await page.locator('#start').waitFor({state:'visible'});
   assert.equal(await page.locator('#screen').getAttribute('width'),'375');
@@ -17,17 +19,20 @@ try {
   await page.reload();
   await page.waitForFunction(()=>document.getElementById('sd-status').textContent.includes('1 files'));
   await page.locator('#launch').uncheck();
+  await page.locator('#clock').selectOption(clock);
+  const started=Date.now();
   await page.locator('#start').click();
   const deadline=Date.now()+300000;
   while(!await page.evaluate(()=>window.q2BootMarker===true)) {
     if(runtimeError)throw runtimeError;
     const status=await page.locator('#status').innerText();
+    if(await page.evaluate(()=>/Kernel panic/.test(window.q2Serial||'')))throw Error('Guest kernel panic');
     if(/Boot failed|QEMU aborted/.test(status))throw Error(status);
     if(Date.now()>deadline)throw Error('Guest boot timed out: '+status);
     await page.waitForTimeout(500);
   }
   assert.equal(await page.evaluate(() => window.q2BootMarker), true, await page.locator('#status').innerText());
-  console.log('Browser MIPS Linux init marker verified.');
+  console.log('Browser MIPS Linux init marker verified in',Date.now()-started,'ms');
 } finally {
   console.log(await page.evaluate(() => window.q2Serial || '').catch(() => ''));
   await page.screenshot({path:'browser-smoke.png',fullPage:true}).catch(()=>{});
