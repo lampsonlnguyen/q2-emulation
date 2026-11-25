@@ -72,3 +72,6 @@ export function snapshot(fs,root) {
   }
   walk(root,'',0);return files;
 }
+
+export const loadSettings=async()=> (await transaction('readonly',s=>s.get('settings'))) || [];
+export const saveSettings=files=>transaction('readwrite',s=>s.put(files,'settings'));
