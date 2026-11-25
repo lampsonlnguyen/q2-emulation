@@ -1,0 +1,27 @@
+name: Web Docker smoke test
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'docs/*.png', 'compose.web.yml', '.github/workflows/test-web-docker.yml']
+  pull_request:
+    paths: ['web/**', 'docs/*.png', 'compose.web.yml', '.github/workflows/test-web-docker.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f compose.web.yml up -d --build
+      - name: Verify HTTP service and isolation headers
+        run: |
+          curl --retry 15 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          curl -fsS -D headers.txt -o index.html http://127.0.0.1:8080/
+          grep -qi '^Cross-Origin-Opener-Policy: same-origin' headers.txt
+          grep -qi '^Cross-Origin-Embedder-Policy: require-corp' headers.txt
+          grep -qi '<html' index.html
+          curl -fsS -o /dev/null http://127.0.0.1:8080/assets/home.png
+      - if: always()
+        run: docker compose -f compose.web.yml logs && docker compose -f compose.web.yml down
