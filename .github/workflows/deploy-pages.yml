@@ -4,8 +4,14 @@ on:
     branches: [main]
     paths: ['web/**', 'docs/*.png', '.github/workflows/deploy-pages.yml']
   workflow_dispatch:
+    inputs:
+      runtime_run_id:
+        description: 'Trusted QEMU runtime build run ID (experimental)'
+        required: false
+        default: '45584062559'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -14,6 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch compiled experimental runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: q2-browser-runtime-experimental
+          run-id: ${{ inputs.runtime_run_id || '45584062559' }}
+          github-token: ${{ github.token }}
+          path: _runtime
       - name: Prepare static site
         run: |
           set -eu
@@ -23,6 +36,14 @@ jobs:
             test -s "docs/$name.png"
             cp "docs/$name.png" _site/assets/
           done
+          mkdir -p _site/runtime/vendor
+          for name in out.js qemu-system-mipsel.wasm qemu-system-mipsel.worker.js vmlinux initramfs.cpio.gz manifest.json COPYING; do
+            test -s "_runtime/$name"
+            cp "_runtime/$name" _site/runtime/
+          done
+          cp _runtime/vendor/xterm.js _runtime/vendor/xterm.css _runtime/vendor/xterm-pty.js _site/runtime/vendor/
+          test -s _site/runtime/index.html
+          test -s _site/runtime/boot.js
           test -s _site/index.html
           touch _site/.nojekyll
       - name: Upload github-pages artifact
