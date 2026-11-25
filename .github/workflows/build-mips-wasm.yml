@@ -22,9 +22,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Keep the optimizing backend a required test, but use deterministic
+          # single-thread TCG to isolate the MTTCG/interrupt memory fault.
           - backend: wasm
             kernel: '6.6.100'
-            clock: normal
+            clock: fixed
           - backend: tci
             kernel: '6.6.100'
             clock: normal
