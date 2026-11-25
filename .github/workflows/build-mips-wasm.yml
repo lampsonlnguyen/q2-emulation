@@ -1,5 +1,8 @@
 name: Experimental MIPS WASM
 on:
+  push:
+    branches: ['web/m2-mips-wasm']
+    paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
   pull_request:
     paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
   workflow_dispatch:
@@ -34,6 +37,15 @@ jobs:
         run: cd build/browser-tools && npx playwright install --with-deps chromium
       - name: Serve experimental runtime
         run: docker compose -f compose.web.yml up -d --build
+      - name: Verify native MIPS Linux guest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-mips
+          set +e
+          timeout 90s qemu-system-mipsel -M malta -cpu 24Kf -m 128M -smp 1 -nodefaults -display none -vga none -serial stdio -monitor none -nic none -kernel web/runtime/vmlinux -initrd web/runtime/initramfs.cpio.gz -append 'console=ttyS0 rdinit=/init panic=-1' > native-boot.log 2>&1
+          set -e
+          cat native-boot.log
+          grep -q Q2_GUEST_READY native-boot.log
       - name: Verify MIPS Linux boot in browser
         run: |
           curl --retry 30 --retry-all-errors --retry-delay 1 --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8080/healthz
