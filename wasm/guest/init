@@ -5,24 +5,11 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 echo "Q2_GUEST_READY"
 uname -m
-# A real firmware filesystem may be attached as an IDE disk by the browser harness.
-# Only execute it when the user explicitly requests a diagnostic launch.
+echo "Q2_INIT kernel=$(uname -r)"
+cat /proc/cmdline
 if grep -qw q2.launch=1 /proc/cmdline; then
-    mkdir -p /mnt/q2
-    if mount -t squashfs -o ro /dev/sda /mnt/q2 || mount -t squashfs -o ro /dev/hda /mnt/q2; then
-        echo "Q2_FIRMWARE_MOUNTED"
-        if [ -x /mnt/q2/release/bin/demo ]; then
-            echo "Q2_DEMO_ATTEMPT"
-            # Diagnostic only: real hardware shim and writable overlay are not yet wired.
-            chroot /mnt/q2 /release/bin/demo
-            echo "Q2_DEMO_EXIT=$?"
-        else
-            echo "Q2_DEMO_NOT_FOUND"
-        fi
-    else
-        echo "Q2_FIRMWARE_MOUNT_FAILED"
-    fi
+    /bin/launch-firmware
+    echo "Q2_LAUNCH_RESULT=$?"
 fi
-echo "Q2_GUEST_IDLE"
-# Keep PID 1 alive. Serial is output-only in the initial harness.
+echo Q2_GUEST_IDLE
 while :; do sleep 3600; done
