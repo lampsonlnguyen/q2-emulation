@@ -1,4 +1,5 @@
 import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings} from './storage.js';
+import {connectAudio} from './audio.js';
 import {log,connectHardware} from './session.js';
 const el = id => document.getElementById(id);
 const status = message => { el('status').textContent = message; log('STATUS',message); };
@@ -109,7 +110,7 @@ start.addEventListener('click', async () => {
     const profile = new URLSearchParams(location.search).get('clock') || 'icount';
     if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
     const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init panic=-1 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' : '')];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init panic=-1 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
     if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none','-virtfs','local,path=/q2sd,mount_tag=q2sd,security_model=none','-virtfs','local,path=/q2settings,mount_tag=q2settings,security_model=none');
     log('QEMU_ARGS',JSON.stringify(args));
     if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
@@ -126,7 +127,7 @@ start.addEventListener('click', async () => {
     window.Module = config;
     const instance = await initModule(config);
     log('WASM','Module initialized');
-    if (launch) {stopHardware=connectHardware(instance.FS);runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
+    if (launch) {const stopDisplay=connectHardware(instance.FS),stopAudio=connectAudio(instance.FS,log);stopHardware=()=>{stopDisplay();stopAudio();};runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
     const oldPoll = instance.TTY.stream_ops.poll;
     instance.TTY.stream_ops.poll = function(stream, timeout) {
       if (!slave.readable) return slave.writable ? 4 : 0;
