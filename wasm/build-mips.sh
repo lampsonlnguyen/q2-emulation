@@ -10,7 +10,8 @@ out="${Q2_WASM_OUT:-$root/build/wasm-mips}"
 mkdir -p "$out"
 git clone https://github.com/ktock/qemu-wasm.git "$work/qemu"
 git -C "$work/qemu" checkout --detach "${QEMU_WASM_REF:-origin/master}"
-git -C "$work/qemu" submodule update --init --recursive
+# Do not recursively fetch unrelated firmware ROM trees (EDK2, etc.).
+# QEMU configure/Meson handles dependencies required by the selected target.
 git -C "$work/qemu" rev-parse HEAD > "$out/upstream-commit.txt"
 cp "$work/qemu/VERSION" "$out/qemu-version.txt"
 docker build -t q2-wasm-build - < "$work/qemu/Dockerfile"
