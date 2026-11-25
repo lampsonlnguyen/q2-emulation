@@ -63,8 +63,12 @@ start.addEventListener('click', async () => {
     const firmware = selected ? extractSquashfs(new Uint8Array(await selected.arrayBuffer())) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,tb-size=32','-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0 rdinit=/init panic=-1' + (launch ? ' q2.launch=1' : '')];
+    const profile = new URLSearchParams(location.search).get('clock') || 'icount';
+    if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
+    const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init panic=-1 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' : '')];
     if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
+    terminal.writeln('Q2_BOOT_PROFILE '+profile+' '+JSON.stringify(args));
     const { default: initModule } = await import('./out.js');
     const config = { arguments: args, pty: slave, mainScriptUrlOrBlob: path('out.js'), locateFile: name => path(name), preRun: [module => {
       module.FS.writeFile('/vmlinux', kernel);
