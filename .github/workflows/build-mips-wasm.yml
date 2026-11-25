@@ -1,7 +1,7 @@
 name: Experimental MIPS WASM
 on:
   pull_request:
-    paths: ['wasm/**', '.github/workflows/build-mips-wasm.yml']
+    paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -28,3 +28,23 @@ jobs:
           path: build/wasm-mips/
           if-no-files-found: error
           retention-days: 7
+      - name: Build Linux guest and assemble browser runtime
+        run: bash wasm/assemble-runtime.sh
+      - name: Install browser test dependencies
+        run: cd build/browser-tools && npx playwright install --with-deps chromium
+      - name: Serve experimental runtime
+        run: docker compose -f compose.web.yml up -d --build
+      - name: Verify MIPS Linux boot in browser
+        run: |
+          curl --retry 15 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          node build/browser-tools/browser-smoke.mjs
+      - name: Upload integrated runtime for diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q2-browser-runtime-experimental
+          path: web/runtime/
+          retention-days: 7
+      - name: Stop test server
+        if: always()
+        run: docker compose -f compose.web.yml down
