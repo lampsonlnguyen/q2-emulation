@@ -1,0 +1,74 @@
+#!/bin/sh
+set -eu
+log() { echo "Q2_FW [$1] $2"; }
+fail() { log ERROR "$*"; exit 1; }
+lower=/mnt/q2-lower
+root=/mnt/q2
+mkdir -p "$lower" "$root" /mnt/q2-write
+log DISK "Available block devices:"
+cat /proc/partitions
+disk=
+for attempt in 1 2 3 4 5; do
+    for candidate in /dev/sda /dev/hda; do
+        if [ -b "$candidate" ] && mount -t squashfs -o ro "$candidate" "$lower"; then disk=$candidate; break; fi
+    done
+    [ -z "$disk" ] || break
+    sleep 1
+done
+[ -n "$disk" ] || fail "SquashFS mount failed"
+log MOUNT "Read-only firmware mounted from $disk"
+echo Q2_FIRMWARE_MOUNTED
+mount -t tmpfs -o size=32m tmpfs /mnt/q2-write || fail "tmpfs mount failed"
+mkdir -p /mnt/q2-write/upper /mnt/q2-write/work
+mount -t overlay overlay -o lowerdir="$lower",upperdir=/mnt/q2-write/upper,workdir=/mnt/q2-write/work "$root" || fail "overlay mount failed"
+log OVERLAY "Writable ephemeral firmware filesystem ready"
+[ -x "$root/release/bin/demo" ] || fail "demo executable not found"
+log ABI "Firmware ELF header (first 52 bytes):"
+od -An -tx1 -N52 "$root/release/bin/demo"
+log ABI "Guest CPU and memory:"
+cat /proc/cpuinfo /proc/meminfo
+mkdir -p "$root/dev/input" "$root/tmp/q2emu" "$root/var/run/dbus" "$root/mnt/data" "$root/mnt/mmc" "$root/proc"
+mount --bind /proc "$root/proc" || fail "proc bind mount failed"
+# Preserve synthetic sysfs files rather than mounting the real guest sysfs over them.
+mkdir -p "$root/sys/devices/i2c-0/0-0062" "$root/sys/class/power_supply/battery"
+echo 100 > "$root/sys/devices/i2c-0/0-0062/cw2015_capacity"
+echo 4200 > "$root/sys/devices/i2c-0/0-0062/cw2015_voltage"
+echo Full > "$root/sys/class/power_supply/battery/status"
+for name in null zero random urandom tty; do
+    touch "$root/dev/$name"
+    mount --bind "/dev/$name" "$root/dev/$name" || fail "bind $name failed"
+done
+rm -f "$root/dev/fb0"
+truncate -s 960000 "$root/dev/fb0"
+for name in mcu shanling_dac input/event1 input/event2 input/event3 input/event4; do
+    rm -f "$root/dev/$name"
+    touch "$root/dev/$name"
+done
+log DEVICES "Framebuffer and device stand-ins created"
+[ -f /q2/libq2emu.so ] || fail "Prebuilt shim missing"
+cp /q2/libq2emu.so "$root/lib/libq2emu.so"
+cp /q2/hardware-bridge "$root/tmp/q2emu/hardware-bridge"
+mkdir -p "$root/usr/share/alsa/alsa.conf.d"
+printf 'pcm.!default { type null }\n' > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf"
+log SHIM "Installed prebuilt firmware shim; ABI compatibility not assumed"
+if [ -c /dev/ttyS1 ]; then
+    stty -F /dev/ttyS1 raw -echo 115200 || fail "hardware UART setup failed"
+    (chroot "$root" /tmp/q2emu/hardware-bridge 3 3<>/dev/ttyS1) &
+    bridge=$!
+    log BRIDGE "Hardware bridge PID $bridge"
+    sleep 1
+    kill -0 "$bridge" || fail "hardware bridge exited"
+else
+    fail "Second serial transport missing"
+fi
+log DEMO "Launching firmware with LD_PRELOAD"
+echo Q2_DEMO_ATTEMPT
+set +e
+chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo'
+result=$?
+set -e
+log DEMO "Exit status $result"
+echo "Q2_DEMO_EXIT=$result"
+[ ! -f "$root/tmp/q2emu/ioctl.log" ] || cat "$root/tmp/q2emu/ioctl.log"
+kill "$bridge" 2>/dev/null || true
+exit "$result"
