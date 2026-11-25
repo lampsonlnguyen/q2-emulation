@@ -25,6 +25,23 @@ git -C "$work/qemu" checkout --detach "${QEMU_WASM_REF:-origin/master}"
 # QEMU configure/Meson handles dependencies required by the selected target.
 git -C "$work/qemu" rev-parse HEAD > "$out/upstream-commit.txt"
 cp "$work/qemu/VERSION" "$out/qemu-version.txt"
+# Malta creates an FPGA LCD virtual console unconditionally, even with
+# -nodefaults and -display none. The headless WASM build has no vc backend.
+# Keep the device and UART intact; discard only its diagnostic LCD output.
+python3 - "$work/qemu/hw/mips/malta.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+old = 'qemu_chr_new("fpga", "vc:320x200", NULL)'
+new = 'qemu_chr_new("fpga", "null", NULL)'
+if source.count(old) == 1:
+    path.write_text(source.replace(old, new, 1))
+elif source.count(new) != 1:
+    raise SystemExit("Unsupported upstream Malta FPGA console layout")
+print("Q2: Malta FPGA diagnostic console uses null backend")
+PY
 # Upstream initializes WASM translation state only in MTTCG. Icount uses RR.
 backend="${Q2_TCG_BACKEND:-wasm}"
 case "$backend" in
