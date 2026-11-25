@@ -1,0 +1,114 @@
+name: Experimental MIPS WASM
+concurrency:
+  group: mips-wasm-${{ github.ref }}
+  cancel-in-progress: true
+on:
+  push:
+    branches: ['web/m4-hardware-bridge']
+    paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
+  pull_request:
+    paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: QEMU-Wasm ref or commit SHA
+        default: origin/master
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Keep the optimizing backend a required test, but use deterministic
+          # single-thread TCG to isolate the MTTCG/interrupt memory fault.
+          - backend: wasm
+            kernel: '6.6.100'
+            clock: fixed
+          - backend: tci
+            kernel: '6.6.100'
+            clock: normal
+          - backend: tci
+            kernel: '5.15.180'
+            clock: fixed
+    name: ${{ matrix.backend }} / Linux ${{ matrix.kernel }} / ${{ matrix.clock }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      QEMU_WASM_REF: ${{ inputs.upstream_ref || 'origin/master' }}
+      JOBS: '2'
+      Q2_TCG_BACKEND: ${{ matrix.backend }}
+      Q2_LINUX_VERSION: ${{ matrix.kernel }}
+      Q2_CLOCK_PROFILE: ${{ matrix.clock }}
+      Q2_SKIP_GUEST_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker hosting configuration before compilation
+        run: |
+          test -s compose.web.yml
+          test -s web/Dockerfile
+          test -s web/nginx.conf
+          docker compose -f compose.web.yml config --quiet
+      - name: Check browser component codecs
+        run: |
+          node wasm/hardware-test.mjs
+          node wasm/storage-test.mjs
+          for file in web/runtime/*.js; do node --input-type=module --check < "$file"; done
+      - name: Build and validate Linux guest before WASM
+        run: |
+          docker build --build-arg "LINUX_VERSION=$Q2_LINUX_VERSION" --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-mips
+          bash wasm/native-smoke.sh
+      - name: Upload native boot diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-boot-${{ matrix.backend }}-${{ matrix.kernel }}
+          path: |
+            native-boot.log
+            build/guest/kernel.config
+          if-no-files-found: warn
+      - name: Build MIPS system emulator
+        run: bash wasm/build-mips.sh
+      - name: Upload experimental runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-mipsel-wasm-experimental-${{ matrix.backend }}-${{ matrix.kernel }}
+          path: build/wasm-mips/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Build Linux guest and assemble browser runtime
+        run: bash wasm/assemble-runtime.sh
+      - name: Install browser test dependencies
+        run: cd build/browser-tools && npx playwright install --with-deps chromium
+      - name: Serve experimental runtime
+        run: docker compose -f compose.web.yml up -d --build
+      - name: Verify MIPS Linux boot in browser
+        run: |
+          curl --retry 30 --retry-all-errors --retry-delay 1 --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8080/healthz
+          node build/browser-tools/browser-smoke.mjs
+      - name: Upload integrated runtime for diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q2-browser-runtime-experimental-${{ matrix.backend }}-${{ matrix.kernel }}
+          path: web/runtime/
+          retention-days: 14
+      - name: Upload browser screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-diagnostics-${{ matrix.backend }}-${{ matrix.kernel }}
+          path: browser-smoke.png
+          if-no-files-found: ignore
+      - name: Stop test server
+        if: always()
+        run: |
+          if [ -f compose.web.yml ]; then
+            docker compose -f compose.web.yml ps -a || true
+            docker compose -f compose.web.yml logs --no-color || true
+            docker compose -f compose.web.yml down
+          fi

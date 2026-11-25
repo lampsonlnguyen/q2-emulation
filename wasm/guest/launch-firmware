@@ -1,0 +1,158 @@
+#!/bin/sh
+set -eu
+log() { echo "Q2_FW [$1] $2"; }
+fail() { log ERROR "$*"; exit 1; }
+lower=/mnt/q2-lower
+root=/mnt/q2
+mkdir -p "$lower" "$root" /mnt/q2-write
+log DISK "Available block devices:"
+cat /proc/partitions
+disk=
+for attempt in 1 2 3 4 5; do
+    for candidate in /dev/sda /dev/hda; do
+        if [ -b "$candidate" ] && mount -t squashfs -o ro "$candidate" "$lower"; then disk=$candidate; break; fi
+    done
+    [ -z "$disk" ] || break
+    sleep 1
+done
+[ -n "$disk" ] || fail "SquashFS mount failed"
+log MOUNT "Read-only firmware mounted from $disk"
+echo Q2_FIRMWARE_MOUNTED
+mount -t tmpfs -o size=32m tmpfs /mnt/q2-write || fail "tmpfs mount failed"
+mkdir -p /mnt/q2-write/upper /mnt/q2-write/work
+mount -t overlay overlay -o lowerdir="$lower",upperdir=/mnt/q2-write/upper,workdir=/mnt/q2-write/work "$root" || fail "overlay mount failed"
+log OVERLAY "Writable ephemeral firmware filesystem ready"
+[ -x "$root/release/bin/demo" ] || fail "demo executable not found"
+# Opening the binary for writing triggers OverlayFS copy-up before patching.
+backlight=$(/bin/firmware-patch "$root/release/bin/demo") || fail "Firmware compatibility patch failed"
+log PATCH "Serial gate patched; backlight symbol $backlight"
+log ABI "Firmware ELF header (first 52 bytes):"
+od -An -tx1 -N52 "$root/release/bin/demo"
+log ABI "Guest CPU and memory:"
+cat /proc/cpuinfo /proc/meminfo
+mkdir -p "$root/dev/input" "$root/tmp/q2emu" "$root/var/run/dbus" "$root/mnt/data" "$root/mnt/mmc" "$root/proc"
+mount --bind /proc "$root/proc" || fail "proc bind mount failed"
+# Preserve synthetic sysfs files rather than mounting the real guest sysfs over them.
+mkdir -p "$root/sys/devices/i2c-0/0-0062" "$root/sys/class/power_supply/battery"
+echo 100 > "$root/sys/devices/i2c-0/0-0062/cw2015_capacity"
+echo 4200 > "$root/sys/devices/i2c-0/0-0062/cw2015_voltage"
+echo Full > "$root/sys/class/power_supply/battery/status"
+for name in null zero random urandom tty; do
+    touch "$root/dev/$name"
+    mount --bind "/dev/$name" "$root/dev/$name" || fail "bind $name failed"
+done
+rm -f "$root/dev/fb0"
+truncate -s 960000 "$root/dev/fb0"
+for name in mcu shanling_dac input/event1 input/event2 input/event3 input/event4; do
+    rm -f "$root/dev/$name"
+    touch "$root/dev/$name"
+done
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2sd "$root/mnt/mmc" || fail "Virtual SD mount failed"
+for name in mmcblk4 mmcblk4p0 mmcblk4p1 mmcblk4p2 mmcblk4p3 mmcblk4p4 mmcblk4p5 mmcblk4p6 mmcblk4p7 mmcblk4p8 mmcblk4p9; do
+    rm -f "$root/dev/$name"
+    touch "$root/dev/$name"
+done
+touch "$root/tmp/mmc_add"
+log SD "Virtual SD mounted at /mnt/mmc"
+df -k "$root/mnt/mmc" || true
+echo Q2_SD_READY
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2settings "$root/mnt/data" || fail "Settings mount failed"
+log SETTINGS "Persistent settings directory mounted at /mnt/data"
+echo Q2_SETTINGS_READY
+log DEVICES "Framebuffer and device stand-ins created"
+[ -f /q2/libq2emu.so ] || fail "Prebuilt shim missing"
+cp /q2/libq2emu.so "$root/lib/libq2emu.so"
+cp /q2/hardware-bridge "$root/tmp/q2emu/hardware-bridge"
+mkdir -p "$root/usr/share/alsa/alsa.conf.d"
+cat > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf" <<'EOF'
+pcm.!hw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type null }
+pcm.!plughw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type null }
+pcm.!default { type null }
+EOF
+# Stand-ins mirror desktop behavior for absent hardware. Only replace the guest copy.
+standin() {
+    path="$root/$1"
+    shift
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        mv "$path" "$path.q2emu-orig"
+        printf '#!/bin/sh\n%s\n' "$*" > "$path"
+        chmod 755 "$path"
+    fi
+}
+standin usr/bin/checkappprocess.sh 'while :; do sleep 3600; done'
+standin usr/bin/rtk_hciattach 'touch /tmp/rtk_init_success; while :; do sleep 3600; done'
+standin usr/bin/hciconfig 'exit 0'
+log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
+mkdir -p "$root/tmp/q2bridge"
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
+if grep -qw q2.audio=1 /proc/cmdline; then
+    # The ALSA file plugin writes raw samples to a FIFO; a capped relay publishes PCM.
+    mkfifo "$root/tmp/q2emu/audio.fifo"
+    cat > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf" <<'EOF'
+pcm.q2capture {
+    type file
+    slave.pcm "null"
+    file "/tmp/q2emu/audio.fifo"
+    format "raw"
+}
+pcm.!default {
+    type plug
+    slave {
+        pcm "q2capture"
+        format S16_LE
+        rate 44100
+        channels 2
+    }
+}
+pcm.!hw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type plug slave.pcm "default" }
+pcm.!plughw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type plug slave.pcm "default" }
+EOF
+    (
+        while :; do
+            /q2/audio-relay "$root/tmp/q2emu/audio.fifo" "$root/tmp/q2bridge/audio.pcm"
+            sleep 1
+        done
+    ) &
+    audio_pid=$!
+    log AUDIO "Experimental default ALSA PCM capture enabled"
+fi
+chroot "$root" /tmp/q2emu/hardware-bridge shared &
+bridge=$!
+trap 'kill "$bridge" ${audio_pid:-} 2>/dev/null || true' EXIT
+log BRIDGE "Shared-directory bridge PID $bridge"
+sleep 1
+kill -0 "$bridge" || fail "hardware bridge exited"
+echo Q2_BRIDGE_READY
+log DEMO "Launching firmware with LD_PRELOAD"
+echo Q2_DEMO_ATTEMPT
+set +e
+# Monitor guest memory and handle explicit browser stop requests.
+Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo' &
+demo_pid=$!
+while kill -0 "$demo_pid" 2>/dev/null; do
+    cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
+    if [ -f "$root/tmp/q2bridge/shutdown" ]; then
+        log SHUTDOWN "Browser requested guest shutdown"
+        kill -TERM "$demo_pid" 2>/dev/null || true
+        for i in 1 2 3 4 5; do kill -0 "$demo_pid" 2>/dev/null || break; sleep 1; done
+        if kill -0 "$demo_pid" 2>/dev/null; then log SHUTDOWN "Forcing unresponsive demo to exit"; kill -KILL "$demo_pid" 2>/dev/null || true; fi
+        break
+    fi
+    sleep 1
+done
+wait "$demo_pid"
+result=$?
+set -e
+log DEMO "Exit status $result"
+echo "Q2_DEMO_EXIT=$result"
+[ ! -f "$root/tmp/q2emu/ioctl.log" ] || cat "$root/tmp/q2emu/ioctl.log"
+kill "$bridge" 2>/dev/null || true
+if [ -f "$root/tmp/q2bridge/shutdown" ]; then
+    sync
+    echo Q2_SHUTDOWN_READY
+    # Keep transport mounted until browser acknowledges its final snapshot.
+    for i in $(seq 1 20); do [ ! -f "$root/tmp/q2bridge/shutdown.ack" ] || break; sleep 1; done
+    echo Q2_SHUTDOWN_COMPLETE
+    poweroff -f
+fi
+exit "$result"

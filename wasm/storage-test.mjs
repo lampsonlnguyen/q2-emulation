@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const source=await readFile(new URL('../web/runtime/storage.js',import.meta.url),'utf8');
+const {safePath,importFiles,LIMIT}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+assert.equal(safePath('Music/Album/song.flac'),'Music/Album/song.flac');
+assert.equal(safePath('Music\\song.flac'),'Music/song.flac');
+for(const invalid of ['../file','/absolute','a/../b','a//b','a/./b','C:/file','a\0b'])assert.throws(()=>safePath(invalid));
+const file=(name,bytes)=>({name,size:bytes.length,arrayBuffer:async()=>Uint8Array.from(bytes).buffer});
+let entries=await importFiles([], [file('a.txt',[1,2])]);
+assert.equal(entries.length,1);
+assert.deepEqual([...entries[0].bytes],[1,2]);
+entries=await importFiles(entries,[file('a.txt',[3]),file('b.txt',[4])]);
+assert.equal(entries.length,2);
+assert.deepEqual([...entries[0].bytes],[3]);
+await assert.rejects(importFiles([],[{name:'huge',size:LIMIT+1,arrayBuffer:async()=>{throw Error('should not read');}}]),/exceeds/);
+console.log('Q2 storage path and import checks passed');

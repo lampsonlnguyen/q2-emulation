@@ -8,11 +8,11 @@ on:
       integrated_preview:
         description: 'Deploy integrated hardware branch artifact instead of Linux-only preview'
         type: boolean
-        default: false
+        default: true
       runtime_run_id:
         description: 'Trusted QEMU runtime build run ID (experimental)'
         required: false
-        default: '45588124143'
+        default: '45711354977'
 permissions:
   contents: read
   actions: read
@@ -29,33 +29,23 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: q2-browser-runtime-experimental
-          run-id: ${{ inputs.runtime_run_id || '45588124143' }}
+          name: q2-browser-runtime-experimental-wasm-6.6.100
+          run-id: ${{ inputs.runtime_run_id || '45711354977' }}
           github-token: ${{ github.token }}
           path: _runtime
-      - name: Require integrated artifact when requested
-        if: inputs.integrated_preview && steps.runtime.outcome == 'failure'
-        run: exit 1
-      - name: Checkout reproducible runtime source if artifact expired
-        if: steps.runtime.outcome == 'failure' && !inputs.integrated_preview
-        uses: actions/checkout@v4
-        with:
-          ref: 3b81f5ac21de5eb74096a363782df0d925b2a8d5
-          path: _runtime_source
-      - name: Rebuild runtime if artifact expired
+      - name: Rebuild current runtime if artifact expired
         if: steps.runtime.outcome == 'failure'
-        working-directory: _runtime_source
         env:
           JOBS: '2'
-          QEMU_WASM_REF: 0ef7b4e281
+          Q2_TCG_BACKEND: wasm
         run: |
           bash wasm/build-mips.sh
           bash wasm/assemble-runtime.sh
-          mkdir -p ../_runtime
-          cp -R web/runtime/. ../_runtime/
+          mkdir -p _runtime
+          cp -R web/runtime/. _runtime/
       - name: Prepare static site
         env:
-          INTEGRATED: ${{ inputs.integrated_preview || false }}
+          INTEGRATED: ${{ true }}
         run: |
           set -eu
           mkdir -p _site/assets
