@@ -6,31 +6,44 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare static site
+        run: |
+          set -eu
+          mkdir -p _site/assets
+          cp -R web/. _site/
+          for name in window home cover-flow folder; do
+            test -s "docs/$name.png"
+            cp "docs/$name.png" _site/assets/
+          done
+          test -s _site/index.html
+          touch _site/.nojekyll
+      - name: Upload github-pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages
+          path: _site
+          retention-days: 7
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - name: Prepare static site
-        run: |
-          mkdir -p web/assets
-          for name in window home cover-flow folder; do
-            test -s "docs/$name.png"
-            cp "docs/$name.png" web/assets/
-          done
-          test -s web/index.html
-          touch web/.nojekyll
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: web
-      - uses: actions/deploy-pages@v4
+      - name: Deploy github-pages artifact
+        uses: actions/deploy-pages@v4
         id: deployment
+        with:
+          artifact_name: github-pages
