@@ -120,11 +120,33 @@ echo Q2_BRIDGE_READY
 log DEMO "Launching firmware with LD_PRELOAD"
 echo Q2_DEMO_ATTEMPT
 set +e
-Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo'
+# Monitor guest memory and handle explicit browser stop requests.
+Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo' &
+demo_pid=$!
+while kill -0 "$demo_pid" 2>/dev/null; do
+    cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
+    if [ -f "$root/tmp/q2bridge/shutdown" ]; then
+        log SHUTDOWN "Browser requested guest shutdown"
+        kill -TERM "$demo_pid" 2>/dev/null || true
+        for i in 1 2 3 4 5; do kill -0 "$demo_pid" 2>/dev/null || break; sleep 1; done
+        if kill -0 "$demo_pid" 2>/dev/null; then log SHUTDOWN "Forcing unresponsive demo to exit"; kill -KILL "$demo_pid" 2>/dev/null || true; fi
+        break
+    fi
+    sleep 1
+done
+wait "$demo_pid"
 result=$?
 set -e
 log DEMO "Exit status $result"
 echo "Q2_DEMO_EXIT=$result"
 [ ! -f "$root/tmp/q2emu/ioctl.log" ] || cat "$root/tmp/q2emu/ioctl.log"
 kill "$bridge" 2>/dev/null || true
+if [ -f "$root/tmp/q2bridge/shutdown" ]; then
+    sync
+    echo Q2_SHUTDOWN_READY
+    # Keep transport mounted until browser acknowledges its final snapshot.
+    for i in $(seq 1 20); do [ ! -f "$root/tmp/q2bridge/shutdown.ack" ] || break; sleep 1; done
+    echo Q2_SHUTDOWN_COMPLETE
+    poweroff -f
+fi
 exit "$result"
