@@ -36,7 +36,7 @@ jobs:
         run: docker compose -f compose.web.yml up -d --build
       - name: Verify MIPS Linux boot in browser
         run: |
-          curl --retry 15 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          curl --retry 30 --retry-all-errors --retry-delay 1 --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8080/healthz
           node build/browser-tools/browser-smoke.mjs
       - name: Upload integrated runtime for diagnostics
         if: always()
@@ -47,4 +47,7 @@ jobs:
           retention-days: 7
       - name: Stop test server
         if: always()
-        run: docker compose -f compose.web.yml down
+        run: |
+          docker compose -f compose.web.yml ps -a
+          docker compose -f compose.web.yml logs --no-color
+          docker compose -f compose.web.yml down
