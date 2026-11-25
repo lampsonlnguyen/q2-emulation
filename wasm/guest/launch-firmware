@@ -51,16 +51,15 @@ cp /q2/hardware-bridge "$root/tmp/q2emu/hardware-bridge"
 mkdir -p "$root/usr/share/alsa/alsa.conf.d"
 printf 'pcm.!default { type null }\n' > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf"
 log SHIM "Installed prebuilt firmware shim; ABI compatibility not assumed"
-if [ -c /dev/ttyS1 ]; then
-    stty -F /dev/ttyS1 raw -echo 115200 || fail "hardware UART setup failed"
-    (chroot "$root" /tmp/q2emu/hardware-bridge 3 3<>/dev/ttyS1) &
-    bridge=$!
-    log BRIDGE "Hardware bridge PID $bridge"
-    sleep 1
-    kill -0 "$bridge" || fail "hardware bridge exited"
-else
-    fail "Second serial transport missing"
-fi
+mkdir -p "$root/tmp/q2bridge"
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
+chroot "$root" /tmp/q2emu/hardware-bridge shared &
+bridge=$!
+trap 'kill "$bridge" 2>/dev/null || true' EXIT
+log BRIDGE "Shared-directory bridge PID $bridge"
+sleep 1
+kill -0 "$bridge" || fail "hardware bridge exited"
+echo Q2_BRIDGE_READY
 log DEMO "Launching firmware with LD_PRELOAD"
 echo Q2_DEMO_ATTEMPT
 set +e
