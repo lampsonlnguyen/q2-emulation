@@ -25,6 +25,8 @@ git -C "$work/qemu" checkout --detach "${QEMU_WASM_REF:-origin/master}"
 # QEMU configure/Meson handles dependencies required by the selected target.
 git -C "$work/qemu" rev-parse HEAD > "$out/upstream-commit.txt"
 cp "$work/qemu/VERSION" "$out/qemu-version.txt"
+# Upstream initializes WASM translation state only in MTTCG. Icount uses RR.
+python3 "$root/wasm/patch-wasm-rr.py" "$work/qemu"
 # Older zlib releases move to the official fossils archive.
 # Use the gzip archive and fail explicitly on HTTP errors.
 sed 's|curl -Ls https://zlib.net/zlib-\$ZLIB_VERSION.tar.xz |curl -fLsS --retry 3 https://zlib.net/fossils/zlib-$ZLIB_VERSION.tar.gz |; s|tar xJC /zlib|tar xzC /zlib|' "$work/qemu/Dockerfile" > "$work/Dockerfile"
