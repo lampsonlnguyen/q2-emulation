@@ -4,7 +4,18 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 container=""
-cleanup() { if [[ -n "$container" ]]; then docker rm -f "$container" >/dev/null 2>&1 || true; fi; rm -rf "$work"; }
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ -n "$container" ]]; then
+        # Restore ownership before removing the container that created the files.
+        docker exec "$container" chown -R "$(id -u):$(id -g)" /qemu || echo "Warning: could not restore temporary source ownership" >&2
+        docker rm -f "$container" >/dev/null 2>&1 || true
+    fi
+    # Cleanup must not overwrite the actual build/validation exit status.
+    rm -rf -- "$work" || echo "Warning: temporary source cleanup incomplete: $work" >&2
+    exit "$status"
+}
 trap cleanup EXIT
 out="${Q2_WASM_OUT:-$root/build/wasm-mips}"
 mkdir -p "$out"
