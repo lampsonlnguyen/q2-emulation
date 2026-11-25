@@ -1,3 +1,4 @@
+import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot} from './storage.js';
 import {log,connectHardware} from './session.js';
 const el = id => document.getElementById(id);
 const status = message => { el('status').textContent = message; log('STATUS',message); };
@@ -6,6 +7,17 @@ const path = name => new URL(name, base).href;
 const start = el('start');
 const reset = el('reset');
 const fileInput = el('firmware');
+let sdFiles=[], runtimeFS=null, storageReady=false, storageBusy=false;
+const sdStatus=()=>{el('sd-status').textContent=sdFiles.length+' files, '+Math.round(sdFiles.reduce((n,f)=>n+f.bytes.byteLength,0)/1024)+' KiB saved locally';};
+const storageInit=loadFiles().then(files=>{sdFiles=files;storageReady=true;sdStatus();}).catch(e=>{log('STORAGE_ERROR',e.message);el('sd-status').textContent=e.message;});
+for(const id of ['sd-files','sd-folder'])el(id).onchange=async e=>{
+  if(start.disabled||storageBusy||!storageReady)return;
+  storageBusy=true;
+  try{const next=await importFiles(sdFiles,e.target.files);await saveFiles(next);sdFiles=next;sdStatus();log('SD_IMPORT',sdFiles.length+' files');}catch(error){log('STORAGE_ERROR',error.message);el('sd-status').textContent=error.message;}finally{storageBusy=false;e.target.value='';}
+};
+el('sd-clear').onclick=async()=>{if(start.disabled||storageBusy||!storageReady)return;if(!confirm('Delete all saved SD files?'))return;storageBusy=true;try{await saveFiles([]);sdFiles=[];sdStatus();}catch(e){log('STORAGE_ERROR',e.message);}finally{storageBusy=false;}};
+el('sd-save').onclick=async()=>{if(!runtimeFS||storageBusy)return;storageBusy=true;try{const next=snapshot(runtimeFS,'/q2sd');await saveFiles(next);sdFiles=next;sdStatus();log('SD_SAVE','Saved snapshot; guest writes should be idle');}catch(e){log('STORAGE_ERROR',e.message);}finally{storageBusy=false;}};
+el('sd-export').onclick=async()=>{try{const {zipSync}=await import('./vendor/fflate.mjs');const files=runtimeFS?snapshot(runtimeFS,'/q2sd'):sdFiles;const zip=zipSync(Object.fromEntries(files.map(f=>[f.name,f.bytes])),{level:0});const url=URL.createObjectURL(new Blob([zip],{type:'application/zip'}));const a=document.createElement('a');a.href=url;a.download='q2-sd.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){log('STORAGE_ERROR',e.message);}};
 const terminal = new Terminal({ convertEol: true, cols: 80, rows: 24, scrollback: 10000 });
 terminal.open(el('terminal'));
 const { master, slave } = openpty();
@@ -54,6 +66,8 @@ function extractSquashfs(bytes) {
   throw new Error('No recovery-update/rootfs.squashfs in archive');
 }
 start.addEventListener('click', async () => {
+  if(storageBusy)return;
+  await storageInit;
   start.disabled = true;
   reset.disabled = false;
   try {
@@ -61,20 +75,21 @@ start.addEventListener('click', async () => {
     const [kernel, initrd] = await Promise.all([get('vmlinux'), get('initramfs.cpio.gz')]);
     const selected = fileInput.files[0];
     if (selected && selected.size > 256 * 1024 * 1024) throw new Error('Firmware input limit is 256 MiB');
-    const firmware = selected ? extractSquashfs(new Uint8Array(await selected.arrayBuffer())) : null;
+    const firmware = selected ? extractSquashfs(await firmwareBytes(selected)) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
     const profile = new URLSearchParams(location.search).get('clock') || 'icount';
     if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
     const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
     const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init panic=-1 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' : '')];
-    if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none');
+    if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none','-virtfs','local,path=/q2sd,mount_tag=q2sd,security_model=none');
     log('QEMU_ARGS',JSON.stringify(args));
     if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
     terminal.writeln('Q2_BOOT_PROFILE '+profile+' '+JSON.stringify(args));
     const { default: initModule } = await import('./out.js');
     const config = { arguments: args, pty: slave, mainScriptUrlOrBlob: path('out.js'), locateFile: name => path(name), preRun: [module => {
       module.FS.mkdir('/q2bridge');
+      populate(module.FS,'/q2sd',sdFiles);
       module.FS.writeFile('/vmlinux', kernel);
       module.FS.writeFile('/initramfs.cpio.gz', initrd);
       if (firmware) module.FS.writeFile('/firmware.squashfs', firmware);
@@ -82,7 +97,7 @@ start.addEventListener('click', async () => {
     window.Module = config;
     const instance = await initModule(config);
     log('WASM','Module initialized');
-    if (launch) connectHardware(instance.FS);
+    if (launch) {connectHardware(instance.FS);runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');}
     const oldPoll = instance.TTY.stream_ops.poll;
     instance.TTY.stream_ops.poll = function(stream, timeout) {
       if (!slave.readable) return slave.writable ? 4 : 0;
