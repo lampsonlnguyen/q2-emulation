@@ -51,7 +51,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-mips
           set +e
-          timeout 90s qemu-system-mipsel -M malta -cpu 24Kf -m 128M -smp 1 -nodefaults -display none -vga none -serial stdio -monitor none -nic none -kernel web/runtime/vmlinux -initrd web/runtime/initramfs.cpio.gz -append 'console=ttyS0 rdinit=/init panic=-1' > native-boot.log 2>&1
+          timeout 240s qemu-system-mipsel -M malta -cpu 24Kf -m 128M -smp 1 -nodefaults -display none -vga none -serial stdio -monitor none -nic none -kernel web/runtime/vmlinux -initrd web/runtime/initramfs.cpio.gz -append 'console=ttyS0,115200 rdinit=/init panic=-1 ignore_loglevel printk.time=1' > native-boot.log 2>&1
           set -e
           cat native-boot.log
           grep -q Q2_GUEST_READY native-boot.log
