@@ -1,0 +1,30 @@
+name: Experimental MIPS WASM
+on:
+  pull_request:
+    paths: ['wasm/**', '.github/workflows/build-mips-wasm.yml']
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: QEMU-Wasm ref or commit SHA
+        default: origin/master
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      QEMU_WASM_REF: ${{ inputs.upstream_ref || 'origin/master' }}
+      JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build MIPS system emulator
+        run: bash wasm/build-mips.sh
+      - name: Upload experimental runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-mipsel-wasm-experimental
+          path: build/wasm-mips/
+          if-no-files-found: error
+          retention-days: 7
