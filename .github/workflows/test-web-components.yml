@@ -1,0 +1,40 @@
+name: Web component checks
+on:
+  push:
+    branches: ['web/m4-hardware-bridge', main]
+    paths: ['web/runtime/**', 'wasm/**', '.github/workflows/test-web-components.yml']
+  pull_request:
+    paths: ['web/runtime/**', 'wasm/**', '.github/workflows/test-web-components.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  components:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          for file in web/runtime/*.js; do node --input-type=module --check < "$file"; done
+      - name: Hardware and storage tests
+        run: |
+          node wasm/hardware-test.mjs
+          node wasm/storage-test.mjs
+      - name: Guest shell syntax
+        run: |
+          sh -n wasm/guest/init
+          sh -n wasm/guest/launch-firmware
+          bash -n wasm/build-mips.sh
+          bash -n wasm/assemble-runtime.sh
+      - name: Guest helper compilation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu libc6-dev-mipsel-cross
+          mkdir -p build/helpers
+          for name in firmware-patch hardware-bridge audio-relay; do
+            mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static "wasm/guest/$name.c" -o "build/helpers/$name"
+            file "build/helpers/$name"
+          done
