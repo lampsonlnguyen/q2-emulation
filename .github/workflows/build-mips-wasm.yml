@@ -1,5 +1,8 @@
 name: Experimental MIPS WASM
 on:
+  push:
+    branches: ['web/m4-hardware-bridge']
+    paths: ['wasm/**', 'web/**', '.github/workflows/build-mips-wasm.yml']
   pull_request:
     paths: ['wasm/**', 'web/**', 'compose.web.yml', '.github/workflows/build-mips-wasm.yml']
   workflow_dispatch:
@@ -19,6 +22,11 @@ jobs:
       JOBS: '2'
     steps:
       - uses: actions/checkout@v4
+      - name: Check browser component codecs
+        run: |
+          node wasm/hardware-test.mjs
+          node wasm/storage-test.mjs
+          for file in web/runtime/*.js; do node --input-type=module --check < "$file"; done
       - name: Build MIPS system emulator
         run: bash wasm/build-mips.sh
       - name: Upload experimental runtime
@@ -36,7 +44,7 @@ jobs:
         run: docker compose -f compose.web.yml up -d --build
       - name: Verify MIPS Linux boot in browser
         run: |
-          curl --retry 15 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          curl --retry 30 --retry-all-errors --retry-delay 1 --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8080/healthz
           node build/browser-tools/browser-smoke.mjs
       - name: Upload integrated runtime for diagnostics
         if: always()
@@ -44,7 +52,17 @@ jobs:
         with:
           name: q2-browser-runtime-experimental
           path: web/runtime/
-          retention-days: 7
+          retention-days: 14
+      - name: Upload browser screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-diagnostics
+          path: browser-smoke.png
+          if-no-files-found: ignore
       - name: Stop test server
         if: always()
-        run: docker compose -f compose.web.yml down
+        run: |
+          docker compose -f compose.web.yml ps -a
+          docker compose -f compose.web.yml logs --no-color
+          docker compose -f compose.web.yml down
