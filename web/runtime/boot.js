@@ -1,4 +1,4 @@
-import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings} from './storage.js';
+import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings,loadFirmwareLibrary,saveFirmwareLibrary} from './storage.js';
 import {connectAudio} from './audio.js';
 import {log,connectHardware} from './session.js';
 const el = id => document.getElementById(id);
@@ -9,7 +9,16 @@ const start = el('start');
 const reset = el('reset');
 const fileInput = el('firmware');
 let sdFiles=[], settingsFiles=[], runtimeFS=null, storageReady=false, storageBusy=false, running=false, stopHardware=null, autosaveTimer=null;
-let storageTask=null;
+let storageTask=null, firmwareLibrary=[], runtimeInstance=null, bootStarted=0;
+const firmwareList=el('firmware-list');
+const fwStatus=message=>{el('firmware-status').textContent=message;log('FIRMWARE',message);};
+function renderFirmware(){const value=firmwareList.value;firmwareList.replaceChildren(new Option('None selected',''));for(const entry of firmwareLibrary)firmwareList.add(new Option(entry.name+' ('+Math.round(entry.blob.size/1048576)+' MiB)',entry.id));if(firmwareLibrary.some(e=>e.id===value))firmwareList.value=value;}
+const fwInit=loadFirmwareLibrary().then(files=>{firmwareLibrary=files;renderFirmware();}).catch(e=>fwStatus(e.message));
+el('firmware-save').onclick=async()=>{if(running||storageBusy)return;const file=fileInput.files[0];if(!file)return fwStatus('Select a local firmware file first');storageBusy=true;try{await fwInit;extractSquashfs(await firmwareBytes(file));const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());const id=Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');const next=firmwareLibrary.filter(e=>e.id!==id);next.push({id,name:file.name,blob:file});if(next.reduce((n,e)=>n+e.blob.size,0)>512*1048576)throw Error('Saved firmware library exceeds 512 MiB');await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();firmwareList.value=id;fileInput.value='';el('launch').checked=true;fwStatus('Firmware validated and saved locally');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
+el('firmware-delete').onclick=async()=>{if(running||storageBusy||!firmwareList.value)return;storageBusy=true;try{const next=firmwareLibrary.filter(e=>e.id!==firmwareList.value);await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();fwStatus('Saved firmware removed');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
+firmwareList.onchange=()=>{fileInput.value='';el('launch').checked=!!firmwareList.value;};fileInput.onchange=()=>{if(fileInput.files.length){firmwareList.value='';el('launch').checked=true;}};
+try{el('shell').value=localStorage.getItem('q2-shell')||'silver';}catch{}el('player').dataset.shell=el('shell').value;el('shell').onchange=()=>{el('player').dataset.shell=el('shell').value;try{localStorage.setItem('q2-shell',el('shell').value);}catch{}};
+const requestedClock=new URLSearchParams(location.search).get('clock');if(['icount','normal','fixed'].includes(requestedClock))el('clock').value=requestedClock;
 const sdStatus=()=>{el('sd-status').textContent=sdFiles.length+' files, '+Math.round(sdFiles.reduce((n,f)=>n+f.bytes.byteLength,0)/1024)+' KiB saved locally';};
 const storageInit=Promise.all([loadFiles(),loadSettings()]).then(([files,settings])=>{sdFiles=files;settingsFiles=settings;storageReady=true;sdStatus();}).catch(e=>{log('STORAGE_ERROR',e.message);el('sd-status').textContent=e.message;});
 for(const id of ['sd-files','sd-folder'])el(id).onchange=async e=>{
@@ -59,6 +68,7 @@ terminal.onWriteParsed(() => {
   }
   window.q2Serial = lines.join('\n');
   if (!window.q2BootMarker && window.q2Serial.includes('Q2_GUEST_READY')) {
+    el('boot-time').textContent=((performance.now()-bootStarted)/1000).toFixed(1)+' s';
     window.q2BootMarker = true;
     status('Linux guest reached init. Firmware hardware integration remains experimental.');
   }
@@ -96,18 +106,19 @@ start.addEventListener('click', async () => {
   if(storageBusy||running)return;
   start.disabled = true;
   running=true;
-  await storageInit;
+  await Promise.all([storageInit,fwInit]);
+  bootStarted=performance.now();
   reset.disabled = false;
   el('stop').disabled=false;
   try {
     status('Loading QEMU and Linux guest…');
     const [kernel, initrd] = await Promise.all([get('vmlinux'), get('initramfs.cpio.gz')]);
-    const selected = fileInput.files[0];
+    const selected = fileInput.files[0] || firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob;
     if (selected && selected.size > 256 * 1024 * 1024) throw new Error('Firmware input limit is 256 MiB');
     const firmware = selected ? extractSquashfs(await firmwareBytes(selected)) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
-    const profile = new URLSearchParams(location.search).get('clock') || 'icount';
+    const profile = el('clock').value;
     if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
     const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
     const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init panic=-1 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
@@ -126,6 +137,8 @@ start.addEventListener('click', async () => {
     }], print: line => {log('QEMU',line); terminal.writeln(line);}, printErr: line => {log('QEMU_ERR',line); terminal.writeln(line);}, onAbort: reason => status('QEMU aborted: ' + reason) };
     window.Module = config;
     const instance = await initModule(config);
+    runtimeInstance=instance;
+    log('PERF','WASM initialization elapsed '+Math.round(performance.now()-bootStarted)+' ms');
     log('WASM','Module initialized');
     if (launch) {const stopDisplay=connectHardware(instance.FS),stopAudio=connectAudio(instance.FS,log);stopHardware=()=>{stopDisplay();stopAudio();};runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
     const oldPoll = instance.TTY.stream_ops.poll;
@@ -136,6 +149,7 @@ start.addEventListener('click', async () => {
     if (!window.q2BootMarker) status('QEMU initialized; awaiting guest serial output.');
   } catch (error) {
     status('Boot failed: ' + error.message);
+    log('BOOT_ERROR',error.stack||error.message);
     console.error(error);
   }
 });
