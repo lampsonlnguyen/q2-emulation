@@ -64,7 +64,11 @@ log DEVICES "Framebuffer and device stand-ins created"
 cp /q2/libq2emu.so "$root/lib/libq2emu.so"
 cp /q2/hardware-bridge "$root/tmp/q2emu/hardware-bridge"
 mkdir -p "$root/usr/share/alsa/alsa.conf.d"
-printf 'pcm.!default { type null }\n' > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf"
+cat > "$root/usr/share/alsa/alsa.conf.d/99-q2emu.conf" <<'EOF'
+pcm.!hw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type null }
+pcm.!plughw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type null }
+pcm.!default { type null }
+EOF
 # Stand-ins mirror desktop behavior for absent hardware. Only replace the guest copy.
 standin() {
     path="$root/$1"
@@ -100,6 +104,8 @@ pcm.!default {
         channels 2
     }
 }
+pcm.!hw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type plug slave.pcm "default" }
+pcm.!plughw { @args [ CARD DEV SUBDEV ] @args.CARD { type string default "0" } @args.DEV { type integer default 0 } @args.SUBDEV { type integer default -1 } type plug slave.pcm "default" }
 EOF
     (
         while :; do
