@@ -1,11 +1,12 @@
+import {log,connectHardware} from './session.js';
 const el = id => document.getElementById(id);
-const status = message => { el('status').textContent = message; };
+const status = message => { el('status').textContent = message; log('STATUS',message); };
 const base = new URL('./', import.meta.url);
 const path = name => new URL(name, base).href;
 const start = el('start');
 const reset = el('reset');
 const fileInput = el('firmware');
-const terminal = new Terminal({ convertEol: true, cols: 80, rows: 24 });
+const terminal = new Terminal({ convertEol: true, cols: 80, rows: 24, scrollback: 10000 });
 terminal.open(el('terminal'));
 const { master, slave } = openpty();
 terminal.loadAddon(master);
@@ -14,11 +15,11 @@ window.q2Serial = '';
 terminal.onWriteParsed(() => {
   const buffer = terminal.buffer.active;
   let lines = [];
-  for (let i = Math.max(0, buffer.length - 100); i < buffer.length; i++) {
+  for (let i = Math.max(0, buffer.length - 10000); i < buffer.length; i++) {
     lines.push(buffer.getLine(i).translateToString(true));
   }
   window.q2Serial = lines.join('\n');
-  if (window.q2Serial.includes('Q2_GUEST_READY')) {
+  if (!window.q2BootMarker && window.q2Serial.includes('Q2_GUEST_READY')) {
     window.q2BootMarker = true;
     status('Linux guest reached init. Firmware hardware integration remains experimental.');
   }
@@ -26,7 +27,7 @@ terminal.onWriteParsed(() => {
 async function get(name) {
   const response = await fetch(path(name));
   if (!response.ok) throw new Error(name + ': HTTP ' + response.status);
-  return new Uint8Array(await response.arrayBuffer());
+  const data = new Uint8Array(await response.arrayBuffer()); log('FETCH',name+' '+data.length+' bytes'); return data;
 }
 function extractSquashfs(bytes) {
   const magic = data => data.length >= 4 && data[0] === 0x68 && data[1] === 0x73 && data[2] === 0x71 && data[3] === 0x73;
@@ -63,16 +64,21 @@ start.addEventListener('click', async () => {
     const firmware = selected ? extractSquashfs(new Uint8Array(await selected.arrayBuffer())) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nographic','-monitor','none','-nic','none','-accel','tcg,tb-size=32','-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0 rdinit=/init panic=-1' + (launch ? ' q2.launch=1' : '')];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,tb-size=32','-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0 rdinit=/init panic=-1' + (launch ? ' q2.launch=1' : '')];
+    if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none');
+    log('QEMU_ARGS',JSON.stringify(args));
     if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
     const { default: initModule } = await import('./out.js');
     const config = { arguments: args, pty: slave, mainScriptUrlOrBlob: path('out.js'), locateFile: name => path(name), preRun: [module => {
+      module.FS.mkdir('/q2bridge');
       module.FS.writeFile('/vmlinux', kernel);
       module.FS.writeFile('/initramfs.cpio.gz', initrd);
       if (firmware) module.FS.writeFile('/firmware.squashfs', firmware);
-    }], print: line => terminal.writeln(line), printErr: line => terminal.writeln(line), onAbort: reason => status('QEMU aborted: ' + reason) };
+    }], print: line => {log('QEMU',line); terminal.writeln(line);}, printErr: line => {log('QEMU_ERR',line); terminal.writeln(line);}, onAbort: reason => status('QEMU aborted: ' + reason) };
     window.Module = config;
     const instance = await initModule(config);
+    log('WASM','Module initialized');
+    if (launch) connectHardware(instance.FS);
     const oldPoll = instance.TTY.stream_ops.poll;
     instance.TTY.stream_ops.poll = function(stream, timeout) {
       if (!slave.readable) return slave.writable ? 4 : 0;
