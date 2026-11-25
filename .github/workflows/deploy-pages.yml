@@ -21,12 +21,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fetch compiled experimental runtime
+        id: runtime
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: q2-browser-runtime-experimental
           run-id: ${{ inputs.runtime_run_id || '45584062559' }}
           github-token: ${{ github.token }}
           path: _runtime
+      - name: Checkout reproducible runtime source if artifact expired
+        if: steps.runtime.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          ref: 3b81f5ac21de5eb74096a363782df0d925b2a8d5
+          path: _runtime_source
+      - name: Rebuild runtime if artifact expired
+        if: steps.runtime.outcome == 'failure'
+        working-directory: _runtime_source
+        env:
+          JOBS: '2'
+          QEMU_WASM_REF: 0ef7b4e281
+        run: |
+          bash wasm/build-mips.sh
+          bash wasm/assemble-runtime.sh
+          mkdir -p ../_runtime
+          cp -R web/runtime/. ../_runtime/
       - name: Prepare static site
         run: |
           set -eu
