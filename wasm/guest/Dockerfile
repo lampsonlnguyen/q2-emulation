@@ -7,7 +7,7 @@ RUN curl -fL --retry 3 https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VERSION%
 RUN curl -fL --retry 3 https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2 | tar -xj
 RUN mkdir -p /rootfs/{bin,dev,proc,sys,tmp,mnt,run,etc} /out
 WORKDIR /work/busybox-${BUSYBOX_VERSION}
-RUN make defconfig && sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/CONFIG_TC=y/# CONFIG_TC is not set/' .config && make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- -j2 && make CONFIG_PREFIX=/rootfs install && mipsel-linux-gnu-readelf -h -A /rootfs/bin/busybox && mipsel-linux-gnu-readelf -l /rootfs/bin/busybox > /tmp/busybox-phdr && ! grep -q INTERP /tmp/busybox-phdr
+RUN make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- defconfig && sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/CONFIG_TC=y/# CONFIG_TC is not set/' .config && make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- CC=mipsel-linux-gnu-gcc -j2 && make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- CC=mipsel-linux-gnu-gcc CONFIG_PREFIX=/rootfs install && LC_ALL=C mipsel-linux-gnu-readelf -h /rootfs/bin/busybox > /tmp/busybox-elf && cat /tmp/busybox-elf && grep -Eq 'Class:[[:space:]]+ELF32' /tmp/busybox-elf && grep -Eq 'Machine:[[:space:]]+MIPS' /tmp/busybox-elf && grep -q 'little endian' /tmp/busybox-elf && mipsel-linux-gnu-readelf -A /rootfs/bin/busybox && mipsel-linux-gnu-readelf -l /rootfs/bin/busybox > /tmp/busybox-phdr && ! grep -q INTERP /tmp/busybox-phdr
 COPY wasm/guest/init /rootfs/init
 COPY wasm/guest/launch-firmware /rootfs/bin/launch-firmware
 COPY wasm/guest/hardware-bridge.c /work/hardware-bridge.c
