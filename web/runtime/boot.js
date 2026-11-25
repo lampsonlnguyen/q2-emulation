@@ -13,7 +13,7 @@ let storageTask=null, firmwareLibrary=[], runtimeInstance=null, bootStarted=0;
 const firmwareList=el('firmware-list');
 const fwStatus=message=>{el('firmware-status').textContent=message;log('FIRMWARE',message);};
 function renderFirmware(){const value=firmwareList.value;firmwareList.replaceChildren(new Option('None selected',''));for(const entry of firmwareLibrary)firmwareList.add(new Option(entry.name+' ('+Math.round(entry.blob.size/1048576)+' MiB)',entry.id));if(firmwareLibrary.some(e=>e.id===value))firmwareList.value=value;}
-const fwInit=loadFirmwareLibrary().then(files=>{firmwareLibrary=files;renderFirmware();}).catch(e=>fwStatus(e.message));
+const fwInit=loadFirmwareLibrary().then(files=>{firmwareLibrary=files;renderFirmware();const restart=sessionStorage.getItem('q2-restart-firmware');sessionStorage.removeItem('q2-restart-firmware');if(files.some(e=>e.id===restart)){firmwareList.value=restart;el('launch').checked=true;fwStatus('Previous saved firmware selected; press Boot to restart');}}).catch(e=>fwStatus(e.message));
 el('firmware-save').onclick=async()=>{if(running||storageBusy)return;const file=fileInput.files[0];if(!file)return fwStatus('Select a local firmware file first');storageBusy=true;try{await fwInit;extractSquashfs(await firmwareBytes(file));const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());const id=Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');const next=firmwareLibrary.filter(e=>e.id!==id);next.push({id,name:file.name,blob:file});if(next.reduce((n,e)=>n+e.blob.size,0)>512*1048576)throw Error('Saved firmware library exceeds 512 MiB');await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();firmwareList.value=id;fileInput.value='';el('launch').checked=true;fwStatus('Firmware validated and saved locally');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
 el('firmware-delete').onclick=async()=>{if(running||storageBusy||!firmwareList.value)return;storageBusy=true;try{const next=firmwareLibrary.filter(e=>e.id!==firmwareList.value);await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();fwStatus('Saved firmware removed');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
 firmwareList.onchange=()=>{fileInput.value='';el('launch').checked=!!firmwareList.value;};fileInput.onchange=()=>{if(fileInput.files.length){firmwareList.value='';el('launch').checked=true;}};
@@ -43,12 +43,24 @@ async function saveSession(reason){
 }
 el('sd-save').onclick=()=>saveSession('manual');
 async function endSession(restart){
+  if(runtimeFS && window.q2Serial.includes('Q2_BRIDGE_READY')){
+    try{
+      runtimeFS.writeFile('/q2bridge/shutdown','1');
+      status('Stopping firmware and flushing guest storage…');
+      const deadline=performance.now()+15000;
+      while(!window.q2Serial.includes('Q2_SHUTDOWN_READY')&&performance.now()<deadline)await new Promise(r=>setTimeout(r,200));
+      if(!window.q2Serial.includes('Q2_SHUTDOWN_READY')&&!confirm('Guest did not acknowledge shutdown. Save live snapshot and stop anyway?'))return;
+      log('SHUTDOWN',window.q2Serial.includes('Q2_SHUTDOWN_READY')?'guest acknowledged':'timeout');
+    }catch(e){log('SHUTDOWN_ERROR',e.message);}
+  }
   if(runtimeFS && !await saveSession(restart?'restart':'stop') && !confirm('Save failed. Discard unsaved guest changes?'))return;
+  if(runtimeFS){try{runtimeFS.writeFile('/q2bridge/shutdown.ack','1');}catch(e){log('SHUTDOWN_ERROR',e.message);}}
   if(autosaveTimer)clearInterval(autosaveTimer);
   if(stopHardware)stopHardware();
   running=false;
   // Navigation destroys the WASM instance and its pthread workers.
-  location.href=restart?location.href:location.pathname;
+  if(restart&&firmwareList.value){try{sessionStorage.setItem('q2-restart-firmware',firmwareList.value);}catch{}}
+  location.reload();
 }
 el('stop').onclick=()=>endSession(false);
 reset.onclick=()=>endSession(true);
@@ -140,7 +152,7 @@ start.addEventListener('click', async () => {
     runtimeInstance=instance;
     log('PERF','WASM initialization elapsed '+Math.round(performance.now()-bootStarted)+' ms');
     log('WASM','Module initialized');
-    if (launch) {const stopDisplay=connectHardware(instance.FS),stopAudio=connectAudio(instance.FS,log);stopHardware=()=>{stopDisplay();stopAudio();};runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
+    if (launch) {const stopDisplay=connectHardware(instance.FS,instance),stopAudio=connectAudio(instance.FS,log);stopHardware=()=>{stopDisplay();stopAudio();};runtimeFS=instance.FS;el('sd-save').disabled=false;log('SD_READY','Shared SD directory exposed; guest mount pending');autosaveTimer=setInterval(()=>{if(el('autosave').checked&&!storageBusy&&window.q2Serial.includes('Q2_SETTINGS_READY'))saveSession('periodic');},60000);}
     const oldPoll = instance.TTY.stream_ops.poll;
     instance.TTY.stream_ops.poll = function(stream, timeout) {
       if (!slave.readable) return slave.writable ? 4 : 0;
