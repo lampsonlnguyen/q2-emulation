@@ -8,7 +8,7 @@ on:
       runtime_run_id:
         description: 'Trusted QEMU runtime build run ID (experimental)'
         required: false
-        default: '45584062559'
+        default: '45588124143'
 permissions:
   contents: read
   actions: read
@@ -26,7 +26,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: q2-browser-runtime-experimental
-          run-id: ${{ inputs.runtime_run_id || '45584062559' }}
+          run-id: ${{ inputs.runtime_run_id || '45588124143' }}
           github-token: ${{ github.token }}
           path: _runtime
       - name: Checkout reproducible runtime source if artifact expired
