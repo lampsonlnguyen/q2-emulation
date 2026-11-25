@@ -17,10 +17,11 @@ el('download-log').onclick = () => {
   a.href=url; a.download='q2-session.log'; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
-export function connectHardware(fs) {
+export function connectHardware(fs,instance) {
   const canvas = el('screen'), ctx = canvas.getContext('2d');
   canvas.width=WIDTH; canvas.height=HEIGHT;
   const queue=[];
+  let lastFrameCount=0;
   let wheel=100, previous=null, frameStamp=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
   const exists = name => fs.analyzePath(name).exists;
   function emit(device, events) {
@@ -40,7 +41,7 @@ export function connectHardware(fs) {
         if(raw!==previous && (!previous || raw.some((v,i)=>v!==previous[i]))) {
           ctx.putImageData(new ImageData(frameRGBA(raw.subarray(5),!!raw[4]),WIDTH,HEIGHT),0,0);
           previous=raw.slice(); frames++;
-          if(!active){active=true;log('FRAME','First bridge frame received (may be blank)');}
+          if(!active){active=true;el('lcd').dataset.ready='true';log('FRAME','First bridge frame received (may be blank)');}
         }
       }
       if(queue.length && !exists('/q2bridge/input')) {
@@ -48,7 +49,19 @@ export function connectHardware(fs) {
         fs.rename('/q2bridge/input.tmp','/q2bridge/input');
         queue.shift();sent++;
       }
-      if(Date.now()-lastStats>=5000){log('STATS','frames='+frames+' input='+sent+' queued='+queue.length+' errors='+errors);lastStats=Date.now();}
+      if(Date.now()-lastStats>=5000){
+        const elapsed=(Date.now()-lastStats)/1000;
+        el('fps').textContent=((frames-lastFrameCount)/elapsed).toFixed(1);
+        el('input-queue').textContent=queue.length;el('bridge-errors').textContent=errors;
+        if(instance?.HEAPU8)el('wasm-ram').textContent=Math.round(instance.HEAPU8.buffer.byteLength/1048576)+' MiB';
+        if(exists('/q2bridge/meminfo')){
+          const mem=fs.readFile('/q2bridge/meminfo',{encoding:'utf8'});
+          const total=Number(mem.match(/MemTotal:\s+(\d+)/)?.[1]), available=Number(mem.match(/MemAvailable:\s+(\d+)/)?.[1]);
+          if(Number.isFinite(total)&&Number.isFinite(available))el('guest-ram').textContent=Math.round((total-available)/1024)+' / '+Math.round(total/1024)+' MiB';
+        }
+        log('STATS','frames='+frames+' fps='+el('fps').textContent+' input='+sent+' queued='+queue.length+' errors='+errors+' guest='+el('guest-ram').textContent+' wasm='+el('wasm-ram').textContent);
+        lastFrameCount=frames;lastStats=Date.now();
+      }
     } catch(e) {if(++errors<=5)log('BRIDGE_ERROR',e.message);}
   }
   for(const button of document.querySelectorAll('[data-key]')) button.onclick=()=> {
@@ -64,6 +77,15 @@ export function connectHardware(fs) {
       for(const report of result.reports){emit(3,report);await new Promise(r=>setTimeout(r,35));}
     } finally {wheelBusy=false;}
   }
+  const ring=el('wheel');
+  let drag=null,pending=0,suppressClick=false;
+  const angle=e=>{const rect=ring.getBoundingClientRect();return Math.atan2(e.clientY-rect.top-rect.height/2,e.clientX-rect.left-rect.width/2);};
+  ring.addEventListener('pointerdown',e=>{if(e.target.closest('.center')||!active)return;drag={id:e.pointerId,angle:angle(e),accum:0,moved:false};});
+  ring.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;const a=angle(e);let d=a-drag.angle;d=Math.atan2(Math.sin(d),Math.cos(d));drag.angle=a;drag.accum+=d;if(Math.abs(drag.accum)>Math.PI/12){drag.moved=true;ring.setPointerCapture(e.pointerId);const ticks=Math.trunc(drag.accum/(Math.PI/12));drag.accum-=ticks*Math.PI/12;pending=Math.max(-12,Math.min(12,pending+ticks));}});
+  function finish(e){if(drag?.id!==e.pointerId)return;suppressClick=drag.moved;drag=null;setTimeout(()=>{suppressClick=false;},0);}
+  ring.addEventListener('pointerup',finish);ring.addEventListener('pointercancel',finish);
+  ring.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopImmediatePropagation();}},true);
+  const gestureTimer=setInterval(()=>{if(pending&&!wheelBusy&&active){const d=Math.sign(pending);pending-=d;spin(d);}},35);
   el('wheel-up').onclick=()=>spin(-1);el('wheel-down').onclick=()=>spin(1);
   canvas.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0?1:-1);},{passive:false});
   function touch(e,phase){const rect=canvas.getBoundingClientRect();emit(2,touchEvents((e.clientX-rect.left)*WIDTH/rect.width,(e.clientY-rect.top)*HEIGHT/rect.height,phase));}
@@ -83,5 +105,5 @@ export function connectHardware(fs) {
   window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',release);
   el('screenshot').onclick=()=>{if(!active)return;canvas.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='q2-screen.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});};
   const timer=setInterval(tick,40);
-  return ()=>{clearInterval(timer);release();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',release);active=false;};
+  return ()=>{clearInterval(timer);clearInterval(gestureTimer);release();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',release);active=false;};
 }
