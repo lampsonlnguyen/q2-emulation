@@ -45,7 +45,49 @@ PY
 # Upstream initializes WASM translation state only in MTTCG. Icount uses RR.
 backend="${Q2_TCG_BACKEND:-wasm}"
 case "$backend" in
-  wasm) python3 "$root/wasm/patch-wasm-rr.py" "$work/qemu"; backend_flags=(--disable-tcg-interpreter) ;;
+  wasm)
+    python3 "$root/wasm/patch-wasm-rr.py" "$work/qemu"
+    # TCG i32 extracts must truncate to 32 bits before shifting. Using i64
+    # shifts with a 32-bit shift distance leaks high bits and breaks sign
+    # extraction (e.g. MIPS SEH/SEB used by kernel pointer arithmetic).
+    python3 - "$work/qemu/tcg/wasm32/tcg-target.c.inc" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+anchor = """    case TCG_TYPE_I32:
+        rs = 32 - len;
+        break;
+    case TCG_TYPE_I64:
+        rs = 64 - len;"""
+replacement = """    case TCG_TYPE_I32:
+        rs = 32 - len;
+        tcg_wasm_out_op_global_get_r(s, arg1);
+        tcg_wasm_out_op_i32_wrap_i64(s);
+        if (rs > pos) {
+            tcg_wasm_out_op_i32_const(s, rs - pos);
+            tcg_wasm_out_op_i32_shl(s);
+        }
+        tcg_wasm_out_op_i32_const(s, rs);
+        if (sign) {
+            tcg_wasm_out_op_i32_shr_s(s);
+            tcg_wasm_out_op_i64_extend_i32_s(s);
+        } else {
+            tcg_wasm_out_op_i32_shr_u(s);
+            tcg_wasm_out_op_i64_extend_i32_u(s);
+        }
+        tcg_wasm_out_op_global_set_r(s, dest);
+        return;
+    case TCG_TYPE_I64:
+        rs = 64 - len;"""
+if source.count(anchor) != 1:
+    raise SystemExit("Unsupported upstream WASM extract emitter layout")
+path.write_text(source.replace(anchor, replacement, 1))
+print("Q2: corrected WASM i32 bit-field extraction")
+PY
+    backend_flags=(--disable-tcg-interpreter)
+    ;;
   tci) backend_flags=(--enable-tcg-interpreter) ;;
   *) echo "Unknown TCG backend: $backend" >&2; exit 1 ;;
 esac
