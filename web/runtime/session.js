@@ -21,7 +21,7 @@ export function connectHardware(fs) {
   const canvas = el('screen'), ctx = canvas.getContext('2d');
   canvas.width=WIDTH; canvas.height=HEIGHT;
   const queue=[];
-  let wheel=100, previous=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
+  let wheel=100, previous=null, frameStamp=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
   const exists = name => fs.analyzePath(name).exists;
   function emit(device, events) {
     if (!active || queue.length >= 256) {log('INPUT_DROP','Bridge not ready or queue full');return;}
@@ -33,9 +33,11 @@ export function connectHardware(fs) {
   function tick() {
     try {
       if(exists('/q2bridge/frame')) {
-        const raw=fs.readFile('/q2bridge/frame');
+        const st=fs.stat('/q2bridge/frame');const stamp=st.ino+':'+st.mtime.getTime()+':'+st.size;
+        const raw=stamp===frameStamp?previous:fs.readFile('/q2bridge/frame');
+        frameStamp=stamp;
         if(raw.length!==FRAME_BYTES+5 || raw[0]!==81||raw[1]!==50||raw[2]!==70||raw[3]!==49) throw Error('Invalid frame packet');
-        if(!previous || raw.some((v,i)=>v!==previous[i])) {
+        if(raw!==previous && (!previous || raw.some((v,i)=>v!==previous[i]))) {
           ctx.putImageData(new ImageData(frameRGBA(raw.subarray(5),!!raw[4]),WIDTH,HEIGHT),0,0);
           previous=raw.slice(); frames++;
           if(!active){active=true;log('FRAME','First bridge frame received (may be blank)');}
@@ -68,6 +70,18 @@ export function connectHardware(fs) {
   canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);touch(e,'down');};
   canvas.onpointermove=e=>{if(canvas.hasPointerCapture(e.pointerId))touch(e,'move');};
   canvas.onpointerup=e=>touch(e,'up');canvas.onpointercancel=e=>touch(e,'up');
+  const keyboard = new Map([['Enter','centre'],['Escape','return'],[' ','play'],['ArrowLeft','prev'],['ArrowRight','next']]);
+  const held=new Set();
+  function keydown(e){
+    if(e.ctrlKey||e.altKey||e.metaKey||e.repeat||e.target.closest('input,textarea,select,button,.xterm,[contenteditable]'))return;
+    if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();spin(e.key==='ArrowUp'?-1:1);return;}
+    const key=keyboard.get(e.key);if(!key||!active)return;
+    e.preventDefault();held.add(key);emit(1,keyEvents(key,true));log('KEYBOARD',key);
+  }
+  function keyup(e){const key=keyboard.get(e.key);if(held.delete(key))emit(1,keyEvents(key,false));}
+  function release(){for(const key of held)emit(1,keyEvents(key,false));held.clear();}
+  window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',release);
+  el('screenshot').onclick=()=>{if(!active)return;canvas.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='q2-screen.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});};
   const timer=setInterval(tick,40);
-  return ()=>clearInterval(timer);
+  return ()=>{clearInterval(timer);release();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',release);active=false;};
 }
