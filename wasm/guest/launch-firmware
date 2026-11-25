@@ -56,6 +56,9 @@ touch "$root/tmp/mmc_add"
 log SD "Virtual SD mounted at /mnt/mmc"
 df -k "$root/mnt/mmc" || true
 echo Q2_SD_READY
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2settings "$root/mnt/data" || fail "Settings mount failed"
+log SETTINGS "Persistent settings directory mounted at /mnt/data"
+echo Q2_SETTINGS_READY
 log DEVICES "Framebuffer and device stand-ins created"
 [ -f /q2/libq2emu.so ] || fail "Prebuilt shim missing"
 cp /q2/libq2emu.so "$root/lib/libq2emu.so"
