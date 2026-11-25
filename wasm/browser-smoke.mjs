@@ -18,6 +18,13 @@ try {
   await page.waitForFunction(()=>document.getElementById('sd-status').textContent.includes('1 files'));
   await page.reload();
   await page.waitForFunction(()=>document.getElementById('sd-status').textContent.includes('1 files'));
+  await page.locator('#firmware').setInputFiles({name:'invalid.tar',mimeType:'application/x-tar',buffer:Buffer.from('invalid')});
+  await page.waitForFunction(()=>document.getElementById('firmware-status').textContent.includes('Firmware rejected'));
+  assert.equal(await page.locator('#start').isDisabled(),true);
+  await page.locator('#firmware').setInputFiles({name:'test.squashfs',mimeType:'application/octet-stream',buffer:Buffer.from('hsqs')});
+  await page.waitForFunction(()=>document.getElementById('firmware-status').textContent.includes('Press Boot'));
+  assert.equal(await page.locator('#launch').isChecked(),true);
+  await page.locator('#firmware').setInputFiles([]);
   await page.locator('#launch').uncheck();
   await page.locator('#clock').selectOption(clock);
   const started=Date.now();

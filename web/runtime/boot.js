@@ -16,7 +16,29 @@ function renderFirmware(){const value=firmwareList.value;firmwareList.replaceChi
 const fwInit=loadFirmwareLibrary().then(files=>{firmwareLibrary=files;renderFirmware();const restart=sessionStorage.getItem('q2-restart-firmware');sessionStorage.removeItem('q2-restart-firmware');if(files.some(e=>e.id===restart)){firmwareList.value=restart;el('launch').checked=true;fwStatus('Previous saved firmware selected; press Boot to restart');}}).catch(e=>fwStatus(e.message));
 el('firmware-save').onclick=async()=>{if(running||storageBusy)return;const file=fileInput.files[0];if(!file)return fwStatus('Select a local firmware file first');storageBusy=true;try{await fwInit;extractSquashfs(await firmwareBytes(file));const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());const id=Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');const next=firmwareLibrary.filter(e=>e.id!==id);next.push({id,name:file.name,blob:file});if(next.reduce((n,e)=>n+e.blob.size,0)>512*1048576)throw Error('Saved firmware library exceeds 512 MiB');await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();firmwareList.value=id;fileInput.value='';el('launch').checked=true;fwStatus('Firmware validated and saved locally');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
 el('firmware-delete').onclick=async()=>{if(running||storageBusy||!firmwareList.value)return;storageBusy=true;try{const next=firmwareLibrary.filter(e=>e.id!==firmwareList.value);await saveFirmwareLibrary(next);firmwareLibrary=next;renderFirmware();fwStatus('Saved firmware removed');}catch(e){fwStatus(e.message);}finally{storageBusy=false;}};
-firmwareList.onchange=()=>{fileInput.value='';el('launch').checked=!!firmwareList.value;};fileInput.onchange=()=>{if(fileInput.files.length){firmwareList.value='';el('launch').checked=true;}};
+let selectionToken=0, validatedFirmware=null, selectionPending=false;
+async function validateSelection(file){
+  const token=++selectionToken;
+  validatedFirmware=null;
+  el('launch').checked=!!file;
+  if(!file){selectionPending=false;fwStatus('No firmware selected. Boot starts Linux only.');start.disabled=running||!crossOriginIsolated||typeof SharedArrayBuffer==='undefined';return;}
+  selectionPending=true;
+  start.disabled=true;
+  fwStatus('Validating '+file.name+'…');
+  try{
+    const bytes=extractSquashfs(await firmwareBytes(file));
+    if(token!==selectionToken)return;
+    validatedFirmware={file,bytes};
+    fwStatus(file.name+' · Valid firmware image ('+Math.round(bytes.length/1048576)+' MiB). Press Boot to launch.');
+  }catch(e){
+    if(token!==selectionToken)return;
+    fwStatus('Firmware rejected: '+e.message);
+  }finally{
+    if(token===selectionToken){selectionPending=false;start.disabled=running||!validatedFirmware||!crossOriginIsolated||typeof SharedArrayBuffer==='undefined';}
+  }
+}
+firmwareList.onchange=()=>{if(running)return;fileInput.value='';validateSelection(firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob);};
+fileInput.onchange=()=>{if(running)return;firmwareList.value='';validateSelection(fileInput.files[0]);};
 try{el('shell').value=localStorage.getItem('q2-shell')||'silver';}catch{}el('player').dataset.shell=el('shell').value;el('shell').onchange=()=>{el('player').dataset.shell=el('shell').value;try{localStorage.setItem('q2-shell',el('shell').value);}catch{}};
 const requestedClock=new URLSearchParams(location.search).get('clock');if(['icount','normal','fixed'].includes(requestedClock))el('clock').value=requestedClock;
 const sdStatus=()=>{el('sd-status').textContent=sdFiles.length+' files, '+Math.round(sdFiles.reduce((n,f)=>n+f.bytes.byteLength,0)/1024)+' KiB saved locally';};
@@ -82,7 +104,14 @@ terminal.onWriteParsed(() => {
   if (!window.q2BootMarker && window.q2Serial.includes('Q2_GUEST_READY')) {
     el('boot-time').textContent=((performance.now()-bootStarted)/1000).toFixed(1)+' s';
     window.q2BootMarker = true;
-    status('Linux guest reached init. Firmware hardware integration remains experimental.');
+    status(el('launch').checked?'Linux booted. Mounting and starting Q2 firmware…':'Linux guest ready. No firmware launch requested.');
+  }
+  if(running && el('launch').checked){
+    const serial=window.q2Serial.replace(/\n(?=[^\[])/g,'\n');
+    const failure=serial.match(/Q2_LAUNCH_RESULT=(?!0\b)(\d+)/);
+    if(failure){status('Firmware launch failed (exit '+failure[1]+'). Open developer console or download the session log.');el('lcd').dataset.ready='false';el('lcd').dataset.message='Firmware launch failed';}
+    else if(serial.includes('Q2_DEMO_EXIT=')){status('Firmware process exited. Open developer console for details.');el('lcd').dataset.message='Firmware process exited';}
+    else if(serial.includes('Q2_DEMO_ATTEMPT')&&!el('lcd').dataset.message){status('Firmware process starting; waiting for display output…');el('lcd').dataset.message='Waiting for firmware display';}
   }
 });
 async function get(name) {
@@ -115,7 +144,7 @@ function extractSquashfs(bytes) {
   throw new Error('No recovery-update/rootfs.squashfs in archive');
 }
 start.addEventListener('click', async () => {
-  if(storageBusy||running)return;
+  if(storageBusy||running||selectionPending)return;
   start.disabled = true;
   running=true;
   await Promise.all([storageInit,fwInit]);
@@ -124,10 +153,11 @@ start.addEventListener('click', async () => {
   el('stop').disabled=false;
   try {
     status('Loading QEMU and Linux guest…');
+    for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock'])el(id).disabled=true;
     const [kernel, initrd] = await Promise.all([get('vmlinux'), get('initramfs.cpio.gz')]);
     const selected = fileInput.files[0] || firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob;
     if (selected && selected.size > 256 * 1024 * 1024) throw new Error('Firmware input limit is 256 MiB');
-    const firmware = selected ? extractSquashfs(await firmwareBytes(selected)) : null;
+    const firmware = selected ? (validatedFirmware?.file===selected ? validatedFirmware.bytes : extractSquashfs(await firmwareBytes(selected))) : null;
     const launch = el('launch').checked;
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
     const profile = el('clock').value;
@@ -163,6 +193,8 @@ start.addEventListener('click', async () => {
     status('Boot failed: ' + error.message);
     log('BOOT_ERROR',error.stack||error.message);
     console.error(error);
+    el('lcd').dataset.message='Boot failed — see session status';
+    if(!runtimeInstance){running=false;start.disabled=false;for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock'])el(id).disabled=false;}
   }
 });
 
