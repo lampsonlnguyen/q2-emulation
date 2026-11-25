@@ -75,3 +75,6 @@ export function snapshot(fs,root) {
 
 export const loadSettings=async()=> (await transaction('readonly',s=>s.get('settings'))) || [];
 export const saveSettings=files=>transaction('readwrite',s=>s.put(files,'settings'));
+
+export const loadFirmwareLibrary=async()=> (await transaction('readonly',s=>s.get('firmware-library'))) || [];
+export const saveFirmwareLibrary=files=>transaction('readwrite',s=>s.put(files,'firmware-library'));
