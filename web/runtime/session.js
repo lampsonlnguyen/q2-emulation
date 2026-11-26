@@ -57,7 +57,7 @@ export function connectHardware(fs,instance) {
         if(exists('/q2bridge/meminfo')){
           const mem=fs.readFile('/q2bridge/meminfo',{encoding:'utf8'});
           const total=Number(mem.match(/MemTotal:\s+(\d+)/)?.[1]), available=Number(mem.match(/MemAvailable:\s+(\d+)/)?.[1]);
-          if(Number.isFinite(total)&&Number.isFinite(available))el('guest-ram').textContent=Math.round((total-available)/1024)+' / '+Math.round(total/1024)+' MiB';
+          if(Number.isFinite(total)&&Number.isFinite(available)&&total>0){const used=Math.max(0,Math.round((total-available)/1024));el('guest-ram').textContent=used+' / '+Math.round(total/1024)+' MiB';el('memory-summary').textContent=used+' MiB / 128 MiB';el('memory-meter').style.setProperty('--memory',Math.min(100,used/128*100)+'%');el('memory-meter').setAttribute('aria-valuenow',String(Math.min(128,used)));}
         }
         log('STATS','frames='+frames+' fps='+el('fps').textContent+' input='+sent+' queued='+queue.length+' errors='+errors+' guest='+el('guest-ram').textContent+' wasm='+el('wasm-ram').textContent);
         lastFrameCount=frames;lastStats=Date.now();

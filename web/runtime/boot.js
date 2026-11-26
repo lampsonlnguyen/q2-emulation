@@ -39,7 +39,12 @@ async function validateSelection(file){
 }
 firmwareList.onchange=()=>{if(running)return;fileInput.value='';validateSelection(firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob);};
 fileInput.onchange=()=>{if(running)return;firmwareList.value='';validateSelection(fileInput.files[0]);};
-try{el('shell').value=localStorage.getItem('q2-shell')||'silver';}catch{}el('player').dataset.shell=el('shell').value;el('shell').onchange=()=>{el('player').dataset.shell=el('shell').value;try{localStorage.setItem('q2-shell',el('shell').value);}catch{}};
+const shellSelect=el('shell');
+const finishes=new Set(Array.from(shellSelect.options,o=>o.value));
+function applyShell(value){if(!finishes.has(value))value='silver';shellSelect.value=value;el('player').dataset.shell=value;for(const b of document.querySelectorAll('[data-finish]'))b.setAttribute('aria-pressed',String(b.dataset.finish===value));try{localStorage.setItem('q2-shell',value);}catch{}}
+let savedShell='silver';try{savedShell=localStorage.getItem('q2-shell')||'silver';}catch{}
+applyShell(savedShell);shellSelect.onchange=()=>applyShell(shellSelect.value);
+for(const b of document.querySelectorAll('[data-finish]'))b.onclick=()=>applyShell(b.dataset.finish);
 const requestedClock=new URLSearchParams(location.search).get('clock');if(['icount','normal','fixed'].includes(requestedClock))el('clock').value=requestedClock;
 const sdStatus=()=>{el('sd-status').textContent=sdFiles.length+' files, '+Math.round(sdFiles.reduce((n,f)=>n+f.bytes.byteLength,0)/1024)+' KiB saved locally';};
 const storageInit=Promise.all([loadFiles(),loadSettings()]).then(([files,settings])=>{sdFiles=files;settingsFiles=settings;storageReady=true;sdStatus();}).catch(e=>{log('STORAGE_ERROR',e.message);el('sd-status').textContent=e.message;});
