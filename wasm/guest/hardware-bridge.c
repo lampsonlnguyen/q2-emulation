@@ -91,9 +91,12 @@ int main(int argc,char **argv) {
             int input=open("/tmp/q2bridge/input",O_RDONLY);
             if(input>=0) {
                 unsigned char h[3], data[1024];
-                if(!full(input,h,3,0)) {
+                /* A shared file may contain up to 32 ordered input reports. */
+                for (unsigned report=0; report<32; report++) {
+                    if (full(input,h,3,0)) break;
                     unsigned n=h[1]|(h[2]<<8);
-                    if(h[0]>=1&&h[0]<=4&&n&&n<=sizeof(data)&&n%16==0&&!full(input,data,n,0)) broadcast(h[0]-1,data,n);
+                    if(h[0]<1||h[0]>4||!n||n>sizeof(data)||n%16||full(input,data,n,0)) break;
+                    broadcast(h[0]-1,data,n);
                 }
                 close(input); unlink("/tmp/q2bridge/input");
             }
