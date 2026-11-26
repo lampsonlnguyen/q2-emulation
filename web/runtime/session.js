@@ -24,7 +24,9 @@ export function connectHardware(fs,instance) {
   const queue=[];
   let lastFrameCount=0;
   let pixels=null, transferBytes=0;
-  fs.writeFile('/q2bridge/partial-frames','1');
+  // Experimental delta transport is opt-in until sustained browser testing passes.
+  const partialFrames=new URLSearchParams(location.search).get('partial')==='1';
+  if(partialFrames)fs.writeFile('/q2bridge/partial-frames','1');
   let wheel=100, previous=null, frameStamp=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
   const exists = name => fs.analyzePath(name).exists;
   let lastInputWarning=0;
@@ -54,7 +56,7 @@ export function connectHardware(fs,instance) {
           transferBytes+=packet.length;
           frameStamp=stamp;
           // Acknowledge only after copying; the guest never overwrites an unconsumed partial frame.
-          fs.unlink('/q2bridge/frame');
+          if(partialFrames)fs.unlink('/q2bridge/frame');
           if(!previous||raw.some((v,i)=>v!==previous[i])) {
           ctx.putImageData(new ImageData(frameRGBA(raw.subarray(5),!!raw[4]),WIDTH,HEIGHT),0,0);
           previous=raw.slice(); frames++;
