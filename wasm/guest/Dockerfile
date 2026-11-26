@@ -6,8 +6,9 @@ COPY wasm/guest/launch-firmware /rootfs/bin/launch-firmware
 COPY wasm/guest/hardware-bridge.c /work/hardware-bridge.c
 COPY wasm/guest/firmware-patch.c /work/firmware-patch.c
 COPY wasm/guest/audio-relay.c /work/audio-relay.c
+COPY wasm/guest/wifi-control.c /work/wifi-control.c
 COPY emulator/libq2emu.so emulator/libq2emu.so.sha256 emulator/shim.c /work/shim/
-RUN cd /work/shim && echo "$(cat libq2emu.so.sha256)  shim.c" | sha256sum -c - && mkdir -p /rootfs/q2 && cp libq2emu.so /rootfs/q2/ && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/hardware-bridge.c -o /rootfs/q2/hardware-bridge && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/firmware-patch.c -o /rootfs/bin/firmware-patch && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/audio-relay.c -o /rootfs/q2/audio-relay && chmod 755 /rootfs/bin/launch-firmware
+RUN cd /work/shim && echo "$(cat libq2emu.so.sha256)  shim.c" | sha256sum -c - && mkdir -p /rootfs/q2 && cp libq2emu.so /rootfs/q2/ && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/hardware-bridge.c -o /rootfs/q2/hardware-bridge && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/firmware-patch.c -o /rootfs/bin/firmware-patch && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/audio-relay.c -o /rootfs/q2/audio-relay && mipsel-linux-gnu-gcc -Wall -Wextra -Werror -O2 -static /work/wifi-control.c -o /rootfs/q2/wifi-control && chmod 755 /rootfs/bin/launch-firmware
 RUN chmod 755 /rootfs/init && mkdir -p /rootfs/dev /rootfs/proc /rootfs/sys /rootfs/tmp /rootfs/mnt /rootfs/run /rootfs/etc && mknod /rootfs/dev/console c 5 1 && mknod /rootfs/dev/null c 1 3 && cd /rootfs && find . -print0 | cpio --null -o -H newc | gzip -9 > /out/initramfs.cpio.gz
 WORKDIR /work/linux-${LINUX_VERSION}
 # Bound RTC calibration for the QEMU Malta 24Kf (320 MHz / CCRes 2).
