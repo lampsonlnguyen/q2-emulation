@@ -86,7 +86,9 @@ int main(int argc,char **argv) {
     for(;;) {
         accept_clients();
         struct pollfd p={fd,POLLIN,0};
-        int result=poll(&p,1,shared?30:100);
+        /* Avoid repeatedly scanning the 480 KB framebuffer and issuing
+         * synchronous 9p lookups while the firmware is idle. */
+        int result=poll(&p,1,shared?80:100);
         if(shared) {
             int input=open("/tmp/q2bridge/input",O_RDONLY);
             if(input>=0) {
@@ -120,8 +122,8 @@ int main(int argc,char **argv) {
         unsigned page=flag("/tmp/q2emu/fb.pan")/375;
         if(page>1)page=0;
         int blank=!!flag("/tmp/q2emu/fb.blank");
-        memcpy(snapshot,map+page*FRAME,FRAME);
-        if(first||blank!=lastblank||memcmp(previous,snapshot,FRAME)) {
+        if(first||blank!=lastblank||memcmp(previous,map+page*FRAME,FRAME)) {
+            memcpy(snapshot,map+page*FRAME,FRAME);
             unsigned char h[5]={'Q','2','F','1',(unsigned char)blank};
             if(shared) {
                 int output=open("/tmp/q2bridge/frame.tmp",O_WRONLY|O_CREAT|O_TRUNC,0644);
