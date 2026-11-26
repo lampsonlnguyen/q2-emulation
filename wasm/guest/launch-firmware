@@ -83,6 +83,19 @@ standin usr/bin/checkappprocess.sh 'while :; do sleep 3600; done'
 standin usr/bin/rtk_hciattach 'touch /tmp/rtk_init_success; while :; do sleep 3600; done'
 standin usr/bin/hciconfig 'exit 0'
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
+# Mirror the desktop emulator: the firmware's Bluetooth code requires a real
+# system bus even when no Bluetooth hardware is present.
+mkdir -p "$root/var/run/dbus" "$root/run/dbus"
+rm -f "$root/var/run/dbus/pid" "$root/var/run/dbus/system_bus_socket"
+[ -x "$root/usr/bin/dbus-daemon" ] || fail "Firmware D-Bus daemon missing"
+chroot "$root" /usr/bin/dbus-daemon --config-file=/etc/dbus-1/system.conf --fork || fail "D-Bus daemon startup failed"
+for attempt in 1 2 3 4 5; do
+    [ ! -S "$root/var/run/dbus/system_bus_socket" ] || break
+    sleep 1
+done
+[ -S "$root/var/run/dbus/system_bus_socket" ] || fail "D-Bus system socket missing"
+log DBUS "Firmware system bus ready"
+echo Q2_DBUS_READY
 mkdir -p "$root/tmp/q2bridge"
 mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
 # Validate actual guest-side creation, read, rename and deletion before starting
@@ -135,7 +148,7 @@ log DEMO "Launching firmware with LD_PRELOAD"
 echo Q2_DEMO_ATTEMPT
 set +e
 # Monitor guest memory and handle explicit browser stop requests.
-Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo' &
+Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo' &
 demo_pid=$!
 while kill -0 "$demo_pid" 2>/dev/null; do
     cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
