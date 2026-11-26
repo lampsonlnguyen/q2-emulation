@@ -1,4 +1,4 @@
-import {listReleases,downloadRelease} from './releases.js';
+import {listReleases,downloadRelease,bundledReleases} from './releases.js?v=2';
 import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings,loadFirmwareLibrary,saveFirmwareLibrary} from './storage.js';
 import {connectAudio} from './audio.js';
 import {log,connectHardware} from './session.js';
@@ -42,18 +42,24 @@ const releaseSelect=el('release-version'), releaseLoad=el('release-load'), relea
 let releases=[], releaseBusy=false, catalogToken=0;
 const releaseStatus=message=>{el('release-status').textContent=message;};
 function syncRelease(){const entry=releases.find(r=>r.tag===releaseSelect.value);releaseLoad.disabled=running||releaseBusy||!entry;el('release-download').href=entry?.url||'https://github.com/DiamondBond/q2-pod/releases';}
+function renderReleases(result){
+  const previous=releaseSelect.value;
+  releases=result;releaseSelect.replaceChildren(new Option('Choose firmware version',''));
+  for(const [index,entry] of releases.entries())releaseSelect.add(new Option(entry.tag+(index===0?' · Latest stable in list':'')+(entry.prerelease?' · Pre-release':'')+' · '+(entry.size/1048576).toFixed(1)+' MiB',entry.tag));
+  releaseSelect.value=releases.some(r=>r.tag===previous)?previous:releases[0]?.tag||'';
+  releaseSelect.disabled=running||releaseBusy||!releases.length;syncRelease();
+}
 async function refreshReleases(){
   const token=++catalogToken;
-  releaseRefresh.disabled=true;releaseStatus('Checking GitHub releases…');
+  releaseRefresh.disabled=true;releaseStatus('Showing available versions; checking GitHub for updates…');
   try{
-    const previous=releaseSelect.value;const result=await listReleases();
+    const result=await listReleases();
     if(token!==catalogToken)return;
-    releases=result;releaseSelect.replaceChildren(new Option('Choose firmware version',''));
-    for(const [index,entry] of releases.entries())releaseSelect.add(new Option(entry.tag+(index===0?' · Latest':'')+(entry.prerelease?' · Pre-release':'')+' · '+(entry.size/1048576).toFixed(1)+' MiB',entry.tag));
-    releaseSelect.value=releases.some(r=>r.tag===previous)?previous:releases[0]?.tag||'';
-    releaseStatus(releases.length+' firmware releases available. Select a version and load it.');
-  }catch(e){releaseStatus('Release list unavailable: '+e.message+'. Local firmware is still available.');}
-  finally{if(token===catalogToken){releaseRefresh.disabled=running;releaseSelect.disabled=running||!releases.length;syncRelease();}}
+    if(!result.length)throw Error('No firmware releases returned');
+    if(!releaseBusy&&!running)renderReleases(result);
+    releaseStatus(result.length+' firmware releases available. Select a version and load it.');
+  }catch(e){if(token===catalogToken&&!releaseBusy)releaseStatus('Live GitHub list unavailable. Showing bundled release list; you can still select a version.');}
+  finally{if(token===catalogToken){releaseRefresh.disabled=running||releaseBusy;releaseSelect.disabled=running||releaseBusy||!releases.length;syncRelease();}}
 }
 releaseSelect.onchange=syncRelease;releaseRefresh.onclick=refreshReleases;
 releaseLoad.onclick=async()=>{
@@ -86,6 +92,7 @@ releaseLoad.onclick=async()=>{
 };
 firmwareList.onchange=()=>{if(running||releaseBusy)return;fileInput.value='';validateSelection(firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob);};
 fileInput.onchange=()=>{if(running||releaseBusy)return;firmwareList.value='';validateSelection(fileInput.files[0]);};
+renderReleases(bundledReleases);
 refreshReleases();
 const shellSelect=el('shell');
 const finishes=new Set(Array.from(shellSelect.options,o=>o.value));
