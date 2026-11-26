@@ -57,7 +57,32 @@ static int ours(int id) {
            !strcmp(nets[id].ssid,"456d756c61746f722057692d4669"))&&
            (!nets[id].key_mgmt[0]||!strcmp(nets[id].key_mgmt,"NONE"));
 }
+/* Save only the synthetic open network, never real SSIDs or credentials. */
+#define STATE "/mnt/data/.q2emu-wifi"
+static int save_state(void) {
+    FILE *f=fopen(STATE ".tmp","w");
+    if(!f)return -1;
+    int ok=1;
+    for(int i=0;i<MAX_NET;i++)if(ours(i))
+        if(fprintf(f,"%d %d\n",i,nets[i].disabled)<0)ok=0;
+    if(fclose(f)!=0)ok=0;
+    if(ok&&rename(STATE ".tmp",STATE)==0)return 0;
+    unlink(STATE ".tmp");return -1;
+}
+static void load_state(void) {
+    FILE *f=fopen(STATE,"r");
+    if(!f)return;
+    int id,disabled;
+    while(fscanf(f,"%d %d",&id,&disabled)==2){
+        if(id<0||id>=MAX_NET||(disabled!=0&&disabled!=1))continue;
+        nets[id]=(struct net){.used=1,.disabled=disabled};
+        strcpy(nets[id].ssid,"\"" SSID "\"");
+        strcpy(nets[id].key_mgmt,"NONE");
+    }
+    fclose(f);
+}
 int main(void) {
+    load_state();
     int fd=-1;
     for(;;){
         if(fd<0){fd=bind_socket();if(fd<0){sleep(1);continue;}}
@@ -106,7 +131,7 @@ int main(void) {
                 }
             }
         }else if(!strcmp(cmd,"SELECT_NETWORK")||!strcmp(cmd,"ENABLE_NETWORK")||!strcmp(cmd,"RECONNECT")||!strcmp(cmd,"REASSOCIATE")){
-            if(id<0&&(!strcmp(arg,"all")||!*arg))for(int i=0;i<MAX_NET;i++)if(ours(i)){id=i;break;}
+            if(id<0&&(!strcmp(arg,"all")||!*arg))for(int i=0;i<MAX_NET;i++)if(ours(i)&&(!nets[i].disabled||!strcmp(cmd,"ENABLE_NETWORK"))){id=i;break;}
             if(ours(id)){current=id;nets[id].disabled=0;reply="OK\n";snprintf(event_buf,sizeof(event_buf),"<3>CTRL-EVENT-CONNECTED - Connection to " BSSID " completed [id=%d id_str=]",id);notice=event_buf;}
         }else if(!strcmp(cmd,"DISCONNECT")||!strcmp(cmd,"TERMINATE")||!strcmp(cmd,"DISABLE_NETWORK")||!strcmp(cmd,"REMOVE_NETWORK")){
             if(!strcmp(cmd,"DISABLE_NETWORK")||!strcmp(cmd,"REMOVE_NETWORK")){
@@ -118,7 +143,7 @@ int main(void) {
             reply="OK\n";
         }else if(!strcmp(cmd,"INTERFACES")||!strcmp(cmd,"IFNAME"))reply="wlan0\n";
         else if(!strcmp(cmd,"SET")||!strcmp(cmd,"AP_SCAN")||!strcmp(cmd,"SCAN_INTERVAL"))reply="OK\n";
-        /* SAVE_CONFIG is deliberately unsupported until persistence exists. */
+        else if(!strcmp(cmd,"SAVE_CONFIG"))reply=save_state()==0?"OK\n":"FAIL\n";
         (void)sendto(fd,reply,strlen(reply),MSG_DONTWAIT|MSG_NOSIGNAL,(struct sockaddr*)&peer,size);
         if(notice)event(fd,notice);
     }
