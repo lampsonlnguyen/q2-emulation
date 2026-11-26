@@ -1,6 +1,7 @@
 import {WIDTH, HEIGHT, FRAME_BYTES, frameRGBA, encodeEvents, keyEvents, touchEvents, wheelReports} from './hardware.js';
 const el = id => document.getElementById(id);
 const lines = [];
+let processDiagnostics='';
 export function log(stage, detail) {
   const line = new Date().toISOString() + ' [' + stage + '] ' + String(detail);
   lines.push(line);
@@ -11,7 +12,7 @@ export function log(stage, detail) {
 window.addEventListener('error', e => log('JS_ERROR', e.message));
 window.addEventListener('unhandledrejection', e => log('PROMISE', e.reason));
 el('download-log').onclick = () => {
-  const blob = new Blob([lines.join('\n'), '\n--- SERIAL ---\n', window.q2Serial || ''], {type:'text/plain'});
+  const blob = new Blob([lines.join('\n'), '\n--- SERIAL ---\n', window.q2Serial || '', '\n--- GUEST PROCESSES ---\n', processDiagnostics], {type:'text/plain'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href=url; a.download='q2-session.log'; a.click();
@@ -79,6 +80,9 @@ export function connectHardware(fs,instance) {
           const mem=fs.readFile('/q2bridge/meminfo',{encoding:'utf8'});
           const total=Number(mem.match(/MemTotal:\s+(\d+)/)?.[1]), available=Number(mem.match(/MemAvailable:\s+(\d+)/)?.[1]);
           if(Number.isFinite(total)&&Number.isFinite(available)&&total>0){const used=Math.max(0,Math.round((total-available)/1024));el('guest-ram').textContent=used+' / '+Math.round(total/1024)+' MiB';el('memory-summary').textContent=used+' MiB / 128 MiB';el('memory-meter').style.setProperty('--memory',Math.min(100,used/128*100)+'%');el('memory-meter').setAttribute('aria-valuenow',String(Math.min(128,used)));}
+        }
+        if(exists('/q2bridge/processes')){
+          processDiagnostics=fs.readFile('/q2bridge/processes',{encoding:'utf8'});
         }
         log('STATS','frames='+frames+' fps='+el('fps').textContent+' input='+sent+' queued='+queue.length+' errors='+errors+' frameBytes='+transferBytes+' guest='+el('guest-ram').textContent+' wasm='+el('wasm-ram').textContent);
         lastFrameCount=frames;lastStats=Date.now();
