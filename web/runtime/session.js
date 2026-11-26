@@ -22,6 +22,8 @@ export function connectHardware(fs,instance) {
   canvas.width=WIDTH; canvas.height=HEIGHT;
   const queue=[];
   let lastFrameCount=0;
+  let pixels=null, transferBytes=0;
+  fs.writeFile('/q2bridge/partial-frames','1');
   let wheel=100, previous=null, frameStamp=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
   const exists = name => fs.analyzePath(name).exists;
   let lastInputWarning=0;
@@ -37,13 +39,26 @@ export function connectHardware(fs,instance) {
     try {
       if(exists('/q2bridge/frame')) {
         const st=fs.stat('/q2bridge/frame');const stamp=st.ino+':'+st.mtime.getTime()+':'+st.size;
-        const raw=stamp===frameStamp?previous:fs.readFile('/q2bridge/frame');
-        frameStamp=stamp;
-        if(raw.length!==FRAME_BYTES+5 || raw[0]!==81||raw[1]!==50||raw[2]!==70||raw[3]!==49) throw Error('Invalid frame packet');
-        if(raw!==previous && (!previous || raw.some((v,i)=>v!==previous[i]))) {
+        if(stamp!==frameStamp) {
+          const packet=fs.readFile('/q2bridge/frame');
+          let raw=packet;
+          if(packet[0]!==81||packet[1]!==50||packet[2]!==70)throw Error('Invalid frame magic');
+          if(packet[3]===50){
+            if(!pixels||packet.length<9)throw Error('Partial frame without baseline');
+            const start=packet[5]|packet[6]<<8, count=packet[7]|packet[8]<<8;
+            if(!count||start+count>375||packet.length!==9+count*1280)throw Error('Invalid partial frame bounds');
+            pixels[4]=packet[4];pixels.set(packet.subarray(9),5+start*1280);raw=pixels;
+          }else if(packet[3]===49&&packet.length===FRAME_BYTES+5){pixels=packet.slice();raw=pixels;}
+          else throw Error('Invalid frame packet');
+          transferBytes+=packet.length;
+          frameStamp=stamp;
+          // Acknowledge only after copying; the guest never overwrites an unconsumed partial frame.
+          fs.unlink('/q2bridge/frame');
+          if(!previous||raw.some((v,i)=>v!==previous[i])) {
           ctx.putImageData(new ImageData(frameRGBA(raw.subarray(5),!!raw[4]),WIDTH,HEIGHT),0,0);
           previous=raw.slice(); frames++;
           if(!active){active=true;el('lcd').dataset.ready='true';log('FRAME','First bridge frame received (may be blank)');}
+          }
         }
       }
       if(queue.length && !exists('/q2bridge/input')) {
@@ -65,7 +80,7 @@ export function connectHardware(fs,instance) {
           const total=Number(mem.match(/MemTotal:\s+(\d+)/)?.[1]), available=Number(mem.match(/MemAvailable:\s+(\d+)/)?.[1]);
           if(Number.isFinite(total)&&Number.isFinite(available)&&total>0){const used=Math.max(0,Math.round((total-available)/1024));el('guest-ram').textContent=used+' / '+Math.round(total/1024)+' MiB';el('memory-summary').textContent=used+' MiB / 128 MiB';el('memory-meter').style.setProperty('--memory',Math.min(100,used/128*100)+'%');el('memory-meter').setAttribute('aria-valuenow',String(Math.min(128,used)));}
         }
-        log('STATS','frames='+frames+' fps='+el('fps').textContent+' input='+sent+' queued='+queue.length+' errors='+errors+' guest='+el('guest-ram').textContent+' wasm='+el('wasm-ram').textContent);
+        log('STATS','frames='+frames+' fps='+el('fps').textContent+' input='+sent+' queued='+queue.length+' errors='+errors+' frameBytes='+transferBytes+' guest='+el('guest-ram').textContent+' wasm='+el('wasm-ram').textContent);
         lastFrameCount=frames;lastStats=Date.now();
       }
     } catch(e) {if(++errors<=5)log('BRIDGE_ERROR',e.message);}
