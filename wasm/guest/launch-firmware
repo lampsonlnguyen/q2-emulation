@@ -102,7 +102,7 @@ for attempt in 1 2 3 4 5; do
     sleep 1
 done
 [ -S "$root/var/run/wpa_supplicant/wlan0" ] || fail "Wi-Fi control socket missing"
-log WIFI "Offline WPA control service ready; internet transport not configured"
+log WIFI "Emulator Wi-Fi control plane ready; internet transport not configured"
 echo Q2_WIFI_CONTROL_READY
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 # Mirror the desktop emulator: the firmware's Bluetooth code requires a real
@@ -176,6 +176,19 @@ sample_tick=0
 while kill -0 "$demo_pid" 2>/dev/null; do
     if [ $((sample_tick % 5)) -eq 0 ]; then
         cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
+    fi
+    if [ $((sample_tick % 15)) -eq 0 ]; then
+        {
+            echo "guest uptime: $(cat /proc/uptime)"
+            cat /proc/loadavg
+            for task in /proc/"$demo_pid"/task/*; do
+                [ -r "$task/stat" ] || continue
+                cat "$task/stat" 2>/dev/null || true
+                cat "$task/wchan" 2>/dev/null || true
+                echo
+            done
+            ps
+        } > "$root/tmp/q2bridge/processes.tmp" && mv "$root/tmp/q2bridge/processes.tmp" "$root/tmp/q2bridge/processes"
     fi
     sample_tick=$((sample_tick + 1))
     if [ -f "$root/tmp/q2bridge/shutdown" ]; then
