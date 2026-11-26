@@ -82,6 +82,13 @@ standin() {
 standin usr/bin/checkappprocess.sh 'while :; do sleep 3600; done'
 standin usr/bin/rtk_hciattach 'touch /tmp/rtk_init_success; while :; do sleep 3600; done'
 standin usr/bin/hciconfig 'exit 0'
+# The browser guest has no physical USB gadget controller or touch gesture
+# sysfs driver. Do not run the real storage gadget setup against absent hardware.
+# Return failure rather than pretending that USB mass storage was configured.
+standin usr/bin/storage_config.sh 'exit 1'
+mkdir -p "$root/sys/hynitron_debug"
+touch "$root/sys/hynitron_debug/hyngescontrol"
+log DEVICES "Prepared virtual touch gesture control; USB gadget unavailable"
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 # Mirror the desktop emulator: the firmware's Bluetooth code requires a real
 # system bus even when no Bluetooth hardware is present.
@@ -150,8 +157,12 @@ set +e
 # Monitor guest memory and handle explicit browser stop requests.
 Q2EMU_BL_ADDR="$backlight" chroot "$root" /bin/sh -c 'export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket Q2EMU_DIR=/tmp/q2emu TSLIB_TSDEVICE=/dev/input/event2 TSLIB_CONFFILE=/etc/ts.conf TSLIB_PLUGINDIR=/usr/lib/ts; LD_PRELOAD=/lib/libq2emu.so exec /release/bin/demo' &
 demo_pid=$!
+sample_tick=0
 while kill -0 "$demo_pid" 2>/dev/null; do
-    cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
+    if [ $((sample_tick % 5)) -eq 0 ]; then
+        cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
+    fi
+    sample_tick=$((sample_tick + 1))
     if [ -f "$root/tmp/q2bridge/shutdown" ]; then
         log SHUTDOWN "Browser requested guest shutdown"
         kill -TERM "$demo_pid" 2>/dev/null || true
