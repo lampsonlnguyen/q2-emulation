@@ -89,6 +89,21 @@ standin usr/bin/storage_config.sh 'exit 1'
 mkdir -p "$root/sys/hynitron_debug"
 touch "$root/sys/hynitron_debug/hyngescontrol"
 log DEVICES "Prepared virtual touch gesture control; USB gadget unavailable"
+# Offline control service mirrors the desktop socket protocol without claiming
+# internet access. Do not launch a real radio driver in the Malta guest.
+standin usr/sbin/wpa_supplicant 'exit 0'
+standin sbin/udhcpc 'exit 1'
+mkdir -p "$root/var/run/wpa_supplicant"
+cp /q2/wifi-control "$root/tmp/q2emu/wifi-control"
+chroot "$root" /tmp/q2emu/wifi-control &
+wifi_pid=$!
+for attempt in 1 2 3 4 5; do
+    [ ! -S "$root/var/run/wpa_supplicant/wlan0" ] || break
+    sleep 1
+done
+[ -S "$root/var/run/wpa_supplicant/wlan0" ] || fail "Wi-Fi control socket missing"
+log WIFI "Offline WPA control service ready; internet transport not configured"
+echo Q2_WIFI_CONTROL_READY
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 # Mirror the desktop emulator: the firmware's Bluetooth code requires a real
 # system bus even when no Bluetooth hardware is present.
@@ -146,7 +161,7 @@ EOF
 fi
 chroot "$root" /tmp/q2emu/hardware-bridge shared &
 bridge=$!
-trap 'kill "$bridge" ${audio_pid:-} 2>/dev/null || true' EXIT
+trap 'kill "$bridge" "$wifi_pid" ${audio_pid:-} 2>/dev/null || true' EXIT
 log BRIDGE "Shared-directory bridge PID $bridge"
 sleep 1
 kill -0 "$bridge" || fail "hardware bridge exited"
