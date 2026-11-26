@@ -1,0 +1,57 @@
+name: Actual firmware browser smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['web/runtime/**', 'wasm/firmware-browser-smoke.mjs', '.github/workflows/test-firmware-browser.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve verified runtime binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: q2-browser-runtime-experimental-wasm-6.6.100
+          run-id: '45711354977'
+          github-token: ${{ github.token }}
+          path: _runtime
+      - name: Install generated runtime dependencies
+        run: |
+          mkdir -p web/runtime/vendor
+          for name in out.js qemu-system-mipsel.wasm qemu-system-mipsel.worker.js vmlinux initramfs.cpio.gz manifest.json COPYING; do
+            cp "_runtime/$name" web/runtime/
+          done
+          cp -R _runtime/vendor/. web/runtime/vendor/
+      - name: Download pinned upstream firmware for testing only
+        run: |
+          curl -fL --retry 3 https://github.com/DiamondBond/q2-pod/releases/download/1.9.4/update.tar -o update.tar
+          echo 'd41622f12bb5c7ffbd775f5d4d2bd4787514a75fb6e12765fa1a43d81af9bcb9  update.tar' | sha256sum -c -
+      - name: Install browser test dependencies
+        run: |
+          npm install --prefix build/browser-tools --no-audit --no-fund playwright@1.51.1
+          cp wasm/firmware-browser-smoke.mjs build/browser-tools/
+          cd build/browser-tools
+          npx playwright install --with-deps chromium
+      - name: Start emulator server
+        run: docker compose -f compose.web.yml up -d --build
+      - name: Verify actual Q2 firmware in browser
+        run: |
+          curl --retry 30 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee firmware-browser.log
+      - name: Upload diagnostics (not firmware)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-browser-diagnostics
+          path: |
+            firmware-browser.log
+            firmware-browser.png
+          if-no-files-found: ignore
+      - name: Stop server
+        if: always()
+        run: docker compose -f compose.web.yml down

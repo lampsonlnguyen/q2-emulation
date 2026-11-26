@@ -165,8 +165,10 @@ start.addEventListener('click', async () => {
     const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
     const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel',profile==='normal'?'tcg,thread=multi,tb-size=32':'tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init ieee754=relaxed panic=0 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
     if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none','-virtfs','local,path=/q2sd,mount_tag=q2sd,security_model=none','-virtfs','local,path=/q2settings,mount_tag=q2settings,security_model=none');
+    // IDE hard disks reject read-only backends. This file is a private MEMFS
+    // copy; the guest mounts its SquashFS read-only and uses a tmpfs overlay.
+    if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide');
     log('QEMU_ARGS',JSON.stringify(args));
-    if (firmware) args.push('-drive','file=/firmware.squashfs,format=raw,if=ide,readonly=on');
     terminal.writeln('Q2_BOOT_PROFILE '+profile+' '+JSON.stringify(args));
     const { default: initModule } = await import('./out.js');
     const config = { arguments: args, pty: slave, mainScriptUrlOrBlob: path('out.js'), locateFile: name => path(name), preRun: [module => {
