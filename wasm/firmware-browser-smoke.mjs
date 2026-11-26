@@ -4,15 +4,19 @@ import { resolve } from 'node:path';
 const browser = await chromium.launch({headless:true});
 const page = await browser.newPage();
 let error;
+const clock=process.env.Q2_CLOCK||'fixed';
+assert.ok(['fixed','normal','icount'].includes(clock));
+let bootAt=0;
 page.on('console',m=>console.log('browser:',m.text()));
 page.on('pageerror',e=>{error=e;console.error(e);});
 try {
-  await page.goto('http://127.0.0.1:8080/runtime/?clock=fixed');
+  await page.goto('http://127.0.0.1:8080/runtime/?clock='+clock);
   await page.waitForFunction(()=>!document.getElementById('start').disabled);
   await page.locator('#firmware').setInputFiles(resolve(process.env.Q2_FIRMWARE||'update.tar'));
   await page.waitForFunction(()=>/Press Boot|Firmware rejected/.test(document.getElementById('firmware-status').textContent),{},{timeout:60000});
   assert.match(await page.locator('#firmware-status').innerText(),/Press Boot/);
   assert.equal(await page.locator('#launch').isChecked(),true);
+  bootAt=Date.now();
   await page.locator('#start').click();
   const deadline=Date.now()+300000;
   let success=false;
@@ -32,8 +36,9 @@ try {
   }
   assert.equal(success,true,'Firmware did not produce a visible frame before the deadline');
   console.log('Actual firmware launch and nonblack framebuffer verified');
+  console.log('Q2_BENCHMARK '+JSON.stringify({clock,firstVisibleMs:Date.now()-bootAt,linuxBoot:await page.locator('#boot-time').innerText()}));
 } finally {
   console.log(await page.evaluate(()=>window.q2Serial||'').catch(()=>''));
-  await page.screenshot({path:'firmware-browser.png',fullPage:true}).catch(()=>{});
+  await page.screenshot({path:'firmware-browser-'+clock+'.png',fullPage:true}).catch(()=>{});
   await browser.close();
 }
