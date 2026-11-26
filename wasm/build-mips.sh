@@ -100,6 +100,32 @@ esac
 printf '%s\n' "$backend" > "$out/backend.txt"
 # All dependencies and Meson downloads were retained in the builder.
 container="$(docker run -d --rm --network none -v "$work/qemu:/qemu:rw" "$builder")"
+# Emscripten 3.1.50 treats UTIME_NOW/UTIME_OMIT as ordinary nanoseconds.
+# The seconds field is unspecified for these sentinels and can become NaN,
+# poisoning MEMFS timestamps and crashing a subsequent fstat64 BigInt write.
+docker exec -i "$container" python3 - <<'PY'
+from pathlib import Path
+p = Path("/emsdk/upstream/emscripten/src/library_syscall.js")
+s = p.read_text()
+old = """      atime = (seconds*1000) + (nanoseconds/(1000*1000));"""
+new = """      atime = nanoseconds === 1073741823 ? Date.now() :
+        nanoseconds === 1073741822 ? FS.stat(path).atime.getTime() :
+        (seconds*1000) + (nanoseconds/(1000*1000));"""
+old_m = """      mtime = (seconds*1000) + (nanoseconds/(1000*1000));"""
+new_m = """      mtime = nanoseconds === 1073741823 ? Date.now() :
+        nanoseconds === 1073741822 ? FS.stat(path).mtime.getTime() :
+        (seconds*1000) + (nanoseconds/(1000*1000));"""
+for a, b in ((old, new), (old_m, new_m)):
+    if s.count(a) != 1:
+        raise SystemExit("Unsupported Emscripten utimensat implementation")
+    s = s.replace(a, b, 1)
+anchor = "    FS.utime(path, atime, mtime);"
+if s.count(anchor) != 1:
+    raise SystemExit("Unsupported Emscripten timestamp write")
+s = s.replace(anchor, "    if (!Number.isFinite(atime) || !Number.isFinite(mtime) || !Number.isFinite(new Date(atime).getTime()) || !Number.isFinite(new Date(mtime).getTime())) return -{{{ cDefs.EOVERFLOW }}};\n" + anchor, 1)
+p.write_text(s)
+print("Q2: Emscripten utimensat sentinel handling and timestamp validation")
+PY
 flags='-O3 -g -Wno-error=unused-command-line-argument -matomics -mbulk-memory -DNDEBUG -DG_DISABLE_ASSERT -D_GNU_SOURCE -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sALLOW_TABLE_GROWTH -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc --js-library=/build/node_modules/xterm-pty/emscripten-pty.js -sEXPORT_ES6=1 -sASYNCIFY_IMPORTS=ffi_call_js'
 docker exec -w /build "$container" emconfigure /qemu/configure --static --target-list=mipsel-softmmu --cpu=wasm32 "${backend_flags[@]}" --cross-prefix= --without-default-features --enable-system --with-coroutine=fiber --enable-virtfs --extra-cflags="$flags" --extra-cxxflags="$flags" --extra-ldflags="-sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
 docker exec "$container" emmake make -j "${JOBS:-2}" qemu-system-mipsel
