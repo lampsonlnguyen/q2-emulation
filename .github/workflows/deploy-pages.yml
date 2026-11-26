@@ -1,98 +1,43 @@
 name: Deploy Q2 web
 on:
+  workflow_run:
+    workflows: ['Publish preserved Q2 builders']
+    types: [completed]
+    branches: [main]
   push:
     branches: [main]
     paths: ['web/**', 'wasm/**', 'docs/*.png', '.github/workflows/deploy-pages.yml']
   workflow_dispatch:
-    inputs:
-      integrated_preview:
-        description: 'Deploy integrated hardware branch artifact instead of Linux-only preview'
-        type: boolean
-        default: true
-      runtime_run_id:
-        description: 'Trusted QEMU runtime build run ID (experimental)'
-        required: false
-        default: '45711354977'
 permissions:
   contents: read
-  actions: read
+  packages: read
 concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
   build:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch compiled experimental runtime
-        id: runtime
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: q2-browser-runtime-experimental-wasm-6.6.100
-          run-id: ${{ inputs.runtime_run_id || '45711354977' }}
-          github-token: ${{ github.token }}
-          path: _runtime
-      - name: Rebuild current runtime if artifact expired
-        if: steps.runtime.outcome == 'failure'
-        env:
-          JOBS: '2'
-          Q2_TCG_BACKEND: wasm
+      - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Retrieve preserved builders
+        run: bash wasm/builders/pull.sh
+      - name: Build current runtime offline
         run: |
           bash wasm/build-mips.sh
           bash wasm/assemble-runtime.sh
-          mkdir -p _runtime
-          cp -R web/runtime/. _runtime/
-      - name: Rebuild WASM engine with current 9p compatibility patch
-        if: steps.runtime.outcome == 'success'
-        env:
-          JOBS: '2'
-          Q2_TCG_BACKEND: wasm
-        run: |
-          bash wasm/build-mips.sh
-          cp build/wasm-mips/{out.js,qemu-system-mipsel.wasm,qemu-system-mipsel.worker.js,manifest.json,COPYING} _runtime/
-      - name: Build current guest kernel with firmware compression support
-        run: |
-          docker build --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
           grep -qx 'CONFIG_SQUASHFS_LZO=y' build/guest/kernel.config
-          cp build/guest/vmlinux build/guest/initramfs.cpio.gz _runtime/
       - name: Prepare static site
-        env:
-          INTEGRATED: ${{ true }}
         run: |
-          set -eu
           mkdir -p _site/assets
           cp -R web/. _site/
-          for name in window home cover-flow folder; do
-            test -s "docs/$name.png"
-            cp "docs/$name.png" _site/assets/
-          done
-          if [ "$INTEGRATED" = true ]; then
-            test -s _runtime/session.js
-            test -s _runtime/storage.js
-            test -s _runtime/audio.js
-            test -s _runtime/player.css
-            test -s _runtime/vendor/fflate.mjs
-            # Keep current checkout HTML, CSS and JS; only copy generated dependencies.
-            mkdir -p _site/runtime/vendor
-            cp _runtime/vendor/fflate.mjs _site/runtime/vendor/
-          fi
-          mkdir -p _site/runtime/vendor
-          for name in out.js qemu-system-mipsel.wasm qemu-system-mipsel.worker.js vmlinux initramfs.cpio.gz manifest.json COPYING; do
-            test -s "_runtime/$name"
-            cp "_runtime/$name" _site/runtime/
-          done
-          cp _runtime/vendor/xterm.js _runtime/vendor/xterm.css _runtime/vendor/xterm-pty.js _site/runtime/vendor/
-          test -s _site/runtime/index.html
-          test -s _site/runtime/boot.js
-          test -s _site/index.html
+          for name in window home cover-flow folder; do cp "docs/$name.png" _site/assets/; done
           touch _site/.nojekyll
-      - name: Upload github-pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
-          name: github-pages
           path: _site
-          retention-days: 7
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -104,8 +49,5 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/configure-pages@v5
-      - name: Deploy github-pages artifact
-        uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v4
         id: deployment
-        with:
-          artifact_name: github-pages

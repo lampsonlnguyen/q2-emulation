@@ -19,10 +19,15 @@ cleanup() {
 trap cleanup EXIT
 out="${Q2_WASM_OUT:-$root/build/wasm-mips}"
 mkdir -p "$out"
-git clone https://github.com/ktock/qemu-wasm.git "$work/qemu"
-git -C "$work/qemu" checkout --detach "${QEMU_WASM_REF:-origin/master}"
-# Do not recursively fetch unrelated firmware ROM trees (EDK2, etc.).
-# QEMU configure/Meson handles dependencies required by the selected target.
+builder="${Q2_WASM_BUILDER:-q2-wasm-builder:v1}"
+docker image inspect "$builder" >/dev/null || { echo "Missing preserved WASM builder: $builder" >&2; exit 1; }
+source_container=$(docker create "$builder")
+docker cp "$source_container:/q2-source" "$work/qemu"
+docker rm "$source_container" >/dev/null
+if [[ -n "${QEMU_WASM_REF:-}" && "$QEMU_WASM_REF" != "$(git -C "$work/qemu" rev-parse HEAD)" ]]; then
+    echo "Requested QEMU revision is not in this builder; publish a new builder version" >&2
+    exit 1
+fi
 git -C "$work/qemu" rev-parse HEAD > "$out/upstream-commit.txt"
 cp "$work/qemu/VERSION" "$out/qemu-version.txt"
 # Malta creates an FPGA LCD virtual console unconditionally, even with
@@ -93,12 +98,8 @@ PY
   *) echo "Unknown TCG backend: $backend" >&2; exit 1 ;;
 esac
 printf '%s\n' "$backend" > "$out/backend.txt"
-# Older zlib releases move to the official fossils archive.
-# Use the gzip archive and fail explicitly on HTTP errors.
-sed 's|curl -Ls https://zlib.net/zlib-\$ZLIB_VERSION.tar.xz |curl -fLsS --retry 3 https://zlib.net/fossils/zlib-$ZLIB_VERSION.tar.gz |; s|tar xJC /zlib|tar xzC /zlib|' "$work/qemu/Dockerfile" > "$work/Dockerfile"
-docker build -t q2-wasm-build - < "$work/Dockerfile"
-# Meson fetches required wrap dependencies into the disposable source tree.
-container="$(docker run -d --rm -v "$work/qemu:/qemu:rw" q2-wasm-build)"
+# All dependencies and Meson downloads were retained in the builder.
+container="$(docker run -d --rm --network none -v "$work/qemu:/qemu:rw" "$builder")"
 flags='-O3 -g -Wno-error=unused-command-line-argument -matomics -mbulk-memory -DNDEBUG -DG_DISABLE_ASSERT -D_GNU_SOURCE -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sALLOW_TABLE_GROWTH -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc --js-library=/build/node_modules/xterm-pty/emscripten-pty.js -sEXPORT_ES6=1 -sASYNCIFY_IMPORTS=ffi_call_js'
 docker exec "$container" emconfigure /qemu/configure --static --target-list=mipsel-softmmu --cpu=wasm32 "${backend_flags[@]}" --cross-prefix= --without-default-features --enable-system --with-coroutine=fiber --enable-virtfs --extra-cflags="$flags" --extra-cxxflags="$flags" --extra-ldflags="-sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
 docker exec "$container" emmake make -j "${JOBS:-2}" qemu-system-mipsel

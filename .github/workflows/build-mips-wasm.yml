@@ -12,10 +12,11 @@ on:
     inputs:
       upstream_ref:
         description: QEMU-Wasm ref or commit SHA
-        default: origin/master
+        default: '0ef7b4e2814b231705d8371dd7997f5b72e70baf'
         required: true
 permissions:
   contents: read
+  packages: read
 jobs:
   build:
     strategy:
@@ -37,7 +38,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      QEMU_WASM_REF: ${{ inputs.upstream_ref || 'origin/master' }}
+      QEMU_WASM_REF: ${{ inputs.upstream_ref || '0ef7b4e2814b231705d8371dd7997f5b72e70baf' }}
       JOBS: '2'
       Q2_TCG_BACKEND: ${{ matrix.backend }}
       Q2_LINUX_VERSION: ${{ matrix.kernel }}
@@ -45,6 +46,8 @@ jobs:
       Q2_SKIP_GUEST_BUILD: '1'
     steps:
       - uses: actions/checkout@v4
+      - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: bash wasm/builders/pull.sh
       - name: Validate Docker hosting configuration before compilation
         run: |
           test -s compose.web.yml
@@ -58,7 +61,7 @@ jobs:
           for file in web/runtime/*.js; do node --input-type=module --check < "$file"; done
       - name: Build and validate Linux guest before WASM
         run: |
-          docker build --build-arg "LINUX_VERSION=$Q2_LINUX_VERSION" --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
+          docker build --network none --build-arg "GUEST_BUILDER=q2-guest-builder:$Q2_LINUX_VERSION-v1" --build-arg "LINUX_VERSION=$Q2_LINUX_VERSION" --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
           sudo apt-get update
           sudo apt-get install -y qemu-system-mips
           bash wasm/native-smoke.sh
