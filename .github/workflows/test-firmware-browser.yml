@@ -29,8 +29,8 @@ jobs:
           if docker manifest inspect ghcr.io/lampsonlnguyen/q2-emulation/wasm-builder:v1 >/dev/null 2>&1; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'Builder bootstrap pending; successful publication triggers firmware tests.'
+            echo '::error::Required WASM builder is not published; run Publish preserved Q2 builders first.'
+            exit 1
           fi
       - name: Retrieve preserved builders
         if: steps.builders.outputs.ready == 'true'
