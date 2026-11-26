@@ -47,9 +47,13 @@ export function connectHardware(fs,instance) {
         }
       }
       if(queue.length && !exists('/q2bridge/input')) {
-        fs.writeFile('/q2bridge/input.tmp',queue[0]);
+        // Send a bounded batch to amortize the 9p handshake; preserve report order.
+        const batch=queue.slice(0,32);
+        const bytes=new Uint8Array(batch.reduce((n,p)=>n+p.length,0));
+        let offset=0;for(const packet of batch){bytes.set(packet,offset);offset+=packet.length;}
+        fs.writeFile('/q2bridge/input.tmp',bytes);
         fs.rename('/q2bridge/input.tmp','/q2bridge/input');
-        queue.shift();sent++;
+        queue.splice(0,batch.length);sent+=batch.length;
       }
       if(Date.now()-lastStats>=5000){
         const elapsed=(Date.now()-lastStats)/1000;
