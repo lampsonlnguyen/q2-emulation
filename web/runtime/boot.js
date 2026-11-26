@@ -1,3 +1,4 @@
+import {listReleases,downloadRelease} from './releases.js';
 import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings,loadFirmwareLibrary,saveFirmwareLibrary} from './storage.js';
 import {connectAudio} from './audio.js';
 import {log,connectHardware} from './session.js';
@@ -37,8 +38,55 @@ async function validateSelection(file){
     if(token===selectionToken){selectionPending=false;start.disabled=running||!validatedFirmware||!crossOriginIsolated||typeof SharedArrayBuffer==='undefined';}
   }
 }
-firmwareList.onchange=()=>{if(running)return;fileInput.value='';validateSelection(firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob);};
-fileInput.onchange=()=>{if(running)return;firmwareList.value='';validateSelection(fileInput.files[0]);};
+const releaseSelect=el('release-version'), releaseLoad=el('release-load'), releaseRefresh=el('release-refresh');
+let releases=[], releaseBusy=false, catalogToken=0;
+const releaseStatus=message=>{el('release-status').textContent=message;};
+function syncRelease(){const entry=releases.find(r=>r.tag===releaseSelect.value);releaseLoad.disabled=running||releaseBusy||!entry;el('release-download').href=entry?.url||'https://github.com/DiamondBond/q2-pod/releases';}
+async function refreshReleases(){
+  const token=++catalogToken;
+  releaseRefresh.disabled=true;releaseStatus('Checking GitHub releases…');
+  try{
+    const previous=releaseSelect.value;const result=await listReleases();
+    if(token!==catalogToken)return;
+    releases=result;releaseSelect.replaceChildren(new Option('Choose firmware version',''));
+    for(const [index,entry] of releases.entries())releaseSelect.add(new Option(entry.tag+(index===0?' · Latest':'')+(entry.prerelease?' · Pre-release':'')+' · '+(entry.size/1048576).toFixed(1)+' MiB',entry.tag));
+    releaseSelect.value=releases.some(r=>r.tag===previous)?previous:releases[0]?.tag||'';
+    releaseStatus(releases.length+' firmware releases available. Select a version and load it.');
+  }catch(e){releaseStatus('Release list unavailable: '+e.message+'. Local firmware is still available.');}
+  finally{if(token===catalogToken){releaseRefresh.disabled=running;releaseSelect.disabled=running||!releases.length;syncRelease();}}
+}
+releaseSelect.onchange=syncRelease;releaseRefresh.onclick=refreshReleases;
+releaseLoad.onclick=async()=>{
+  const entry=releases.find(r=>r.tag===releaseSelect.value);
+  if(!entry||running||releaseBusy||storageBusy)return;
+  releaseBusy=true;storageBusy=true;selectionPending=true;start.disabled=true;releaseSelect.disabled=true;releaseRefresh.disabled=true;syncRelease();
+  for(const id of ['firmware','firmware-list','firmware-save','firmware-delete'])el(id).disabled=true;
+  try{
+    await fwInit;
+    const id=entry.digest||'diamondbond:'+entry.tag+':'+entry.assetId;
+    let saved=firmwareLibrary.find(f=>f.id===id);
+    if(!saved){
+      releaseStatus('Downloading Q2 Pod '+entry.tag+'…');
+      const blob=await downloadRelease(entry,releaseStatus);
+      extractSquashfs(await firmwareBytes(blob));
+      saved={id,name:blob.name,blob};
+      const next=firmwareLibrary.filter(f=>f.id!==id);
+      while(next.reduce((n,f)=>n+f.blob.size,0)+blob.size>512*1048576){
+        const index=next.findIndex(f=>f.id.startsWith('sha256:')||f.id.startsWith('diamondbond:'));
+        if(index<0)break;next.splice(index,1);
+      }
+      if(next.reduce((n,f)=>n+f.blob.size,0)+blob.size<=512*1048576){next.push(saved);try{await saveFirmwareLibrary(next);firmwareLibrary=next;}catch(e){log('FIRMWARE_CACHE',e.message);}}
+    }
+    if(!firmwareLibrary.some(f=>f.id===id))firmwareLibrary.push(saved);
+    fileInput.value='';renderFirmware();firmwareList.value=id;
+    await validateSelection(saved.blob);
+    releaseStatus(validatedFirmware?'Q2 Pod '+entry.tag+' ready. Press Boot.':'Firmware validation failed.');
+  }catch(e){releaseStatus('Unable to load '+entry.tag+': '+e.message+'. Use Download from GitHub, then select the local file.');}
+  finally{releaseBusy=false;storageBusy=false;selectionPending=false;start.disabled=running||(!validatedFirmware&&el('launch').checked)||!crossOriginIsolated||typeof SharedArrayBuffer==='undefined';releaseSelect.disabled=running;releaseRefresh.disabled=running;for(const id of ['firmware','firmware-list','firmware-save','firmware-delete'])el(id).disabled=running;syncRelease();}
+};
+firmwareList.onchange=()=>{if(running||releaseBusy)return;fileInput.value='';validateSelection(firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob);};
+fileInput.onchange=()=>{if(running||releaseBusy)return;firmwareList.value='';validateSelection(fileInput.files[0]);};
+refreshReleases();
 const shellSelect=el('shell');
 const finishes=new Set(Array.from(shellSelect.options,o=>o.value));
 function applyShell(value){if(!finishes.has(value))value='silver';shellSelect.value=value;el('player').dataset.shell=value;for(const b of document.querySelectorAll('[data-finish]'))b.setAttribute('aria-pressed',String(b.dataset.finish===value));try{localStorage.setItem('q2-shell',value);}catch{}}
@@ -158,7 +206,7 @@ start.addEventListener('click', async () => {
   el('stop').disabled=false;
   try {
     status('Loading QEMU and Linux guest…');
-    for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock'])el(id).disabled=true;
+    for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock','release-version','release-load','release-refresh'])el(id).disabled=true;
     const [kernel, initrd] = await Promise.all([get('vmlinux'), get('initramfs.cpio.gz')]);
     const selected = fileInput.files[0] || firmwareLibrary.find(e=>e.id===firmwareList.value)?.blob;
     if (selected && selected.size > 256 * 1024 * 1024) throw new Error('Firmware input limit is 256 MiB');
@@ -201,7 +249,7 @@ start.addEventListener('click', async () => {
     log('BOOT_ERROR',error.stack||error.message);
     console.error(error);
     el('lcd').dataset.message='Boot failed — see session status';
-    if(!runtimeInstance){running=false;start.disabled=false;for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock'])el(id).disabled=false;}
+    if(!runtimeInstance){running=false;start.disabled=false;for(const id of ['firmware','firmware-list','firmware-save','firmware-delete','launch','clock','release-version','release-load','release-refresh'])el(id).disabled=false;}
   }
 });
 
