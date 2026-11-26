@@ -82,7 +82,7 @@ int main(int argc,char **argv) {
     if(map==MAP_FAILED){perror("mmap");return 1;}
     unsigned char *previous=malloc(FRAME), *snapshot=malloc(FRAME);
     if(!previous||!snapshot)return 1;
-    int first=1, lastblank=-1;
+    int first=1, lastblank=-1, partial_mode=0;
     for(;;) {
         accept_clients();
         struct pollfd p={fd,POLLIN,0};
@@ -111,6 +111,12 @@ int main(int argc,char **argv) {
             broadcast(h[0]-1,data,n);
         }
         if(p.revents&(POLLERR|POLLHUP|POLLNVAL))return 1;
+        if(shared && !partial_mode && access("/tmp/q2bridge/partial-frames",F_OK)==0) {
+            partial_mode=1; first=1;
+        }
+        /* Never replace an unacknowledged delta: the browser must consume
+         * every published baseline before the next delta is computed. */
+        if(partial_mode && access("/tmp/q2bridge/frame",F_OK)==0) continue;
         unsigned page=flag("/tmp/q2emu/fb.pan")/375;
         if(page>1)page=0;
         int blank=!!flag("/tmp/q2emu/fb.blank");
@@ -120,7 +126,17 @@ int main(int argc,char **argv) {
             if(shared) {
                 int output=open("/tmp/q2bridge/frame.tmp",O_WRONLY|O_CREAT|O_TRUNC,0644);
                 if(output<0){int e=errno;fprintf(stderr,"frame open errno=%d: %s\n",e,strerror(e));return 1;}
-                int failed=full(output,h,sizeof(h),1)||full(output,snapshot,FRAME,1);
+                unsigned start=0,end=375;
+                if(partial_mode && !first && blank==lastblank) {
+                    while(start<375 && !memcmp(previous+start*1280,snapshot+start*1280,1280)) start++;
+                    while(end>start && !memcmp(previous+(end-1)*1280,snapshot+(end-1)*1280,1280)) end--;
+                }
+                unsigned rows=end-start;
+                int failed;
+                if(partial_mode && rows>0 && rows<375) {
+                    unsigned char delta[9]={'Q','2','F','2',(unsigned char)blank,(unsigned char)start,(unsigned char)(start>>8),(unsigned char)rows,(unsigned char)(rows>>8)};
+                    failed=full(output,delta,sizeof(delta),1)||full(output,snapshot+start*1280,rows*1280,1);
+                } else failed=full(output,h,sizeof(h),1)||full(output,snapshot,FRAME,1);
                 close(output);
                 if(failed||rename("/tmp/q2bridge/frame.tmp","/tmp/q2bridge/frame")){perror("frame publish");return 1;}
             } else if(full(fd,h,sizeof(h),1)||full(fd,snapshot,FRAME,1))return 1;
