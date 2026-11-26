@@ -2,7 +2,7 @@ name: Deploy Q2 web
 on:
   push:
     branches: [main]
-    paths: ['web/**', 'docs/*.png', '.github/workflows/deploy-pages.yml']
+    paths: ['web/**', 'wasm/guest/**', 'docs/*.png', '.github/workflows/deploy-pages.yml']
   workflow_dispatch:
     inputs:
       integrated_preview:
@@ -43,6 +43,11 @@ jobs:
           bash wasm/assemble-runtime.sh
           mkdir -p _runtime
           cp -R web/runtime/. _runtime/
+      - name: Build current guest kernel with firmware compression support
+        run: |
+          docker build --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
+          grep -qx 'CONFIG_SQUASHFS_LZO=y' build/guest/kernel.config
+          cp build/guest/vmlinux build/guest/initramfs.cpio.gz _runtime/
       - name: Prepare static site
         env:
           INTEGRATED: ${{ true }}

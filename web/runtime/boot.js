@@ -175,7 +175,7 @@ terminal.onWriteParsed(() => {
   }
 });
 async function get(name) {
-  const response = await fetch(path(name));
+  const response = await fetch(path(name), {cache:'no-store'});
   if (!response.ok) throw new Error(name + ': HTTP ' + response.status);
   const data = new Uint8Array(await response.arrayBuffer()); log('FETCH',name+' '+data.length+' bytes'); return data;
 }

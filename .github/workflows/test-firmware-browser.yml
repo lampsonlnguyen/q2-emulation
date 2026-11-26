@@ -3,14 +3,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['web/runtime/**', 'wasm/firmware-browser-smoke.mjs', '.github/workflows/test-firmware-browser.yml']
+    paths: ['web/runtime/**', 'wasm/guest/**', 'wasm/firmware-browser-smoke.mjs', '.github/workflows/test-firmware-browser.yml']
 permissions:
   contents: read
   actions: read
 jobs:
   firmware:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Retrieve verified runtime binaries
@@ -27,6 +27,11 @@ jobs:
             cp "_runtime/$name" web/runtime/
           done
           cp -R _runtime/vendor/. web/runtime/vendor/
+      - name: Build current guest kernel
+        run: |
+          docker build --output type=local,dest=build/guest -f wasm/guest/Dockerfile .
+          grep -qx 'CONFIG_SQUASHFS_LZO=y' build/guest/kernel.config
+          cp build/guest/vmlinux build/guest/initramfs.cpio.gz web/runtime/
       - name: Download pinned upstream firmware for testing only
         run: |
           curl -fL --retry 3 https://github.com/DiamondBond/q2-pod/releases/download/1.9.4/update.tar -o update.tar
@@ -42,6 +47,7 @@ jobs:
       - name: Verify actual Q2 firmware in browser
         run: |
           curl --retry 30 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
+          set -o pipefail
           node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee firmware-browser.log
       - name: Upload diagnostics (not firmware)
         if: always()
