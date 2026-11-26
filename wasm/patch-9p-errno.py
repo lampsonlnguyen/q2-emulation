@@ -48,3 +48,14 @@ if source.count(anchor) != 1:
     raise SystemExit("Unsupported upstream 9p errno translation layout")
 path.write_text(source.replace(anchor, "\n".join(lines), 1))
 print("Q2: translated Emscripten 9p errno values to MIPS Linux ABI")
+
+# Emscripten exposes O_PATH in its headers but MEMFS does not implement the
+# Linux O_PATH + /proc/self/fd chmod semantics. Use QEMU's portable fd-based
+# fallback, retaining O_NOFOLLOW and the regular-file/directory checks.
+source = path.read_text()
+anchor = "#ifdef O_PATH\n#define O_PATH_9P_UTIL O_PATH"
+replacement = "#if defined(O_PATH) && !defined(EMSCRIPTEN) && !defined(__EMSCRIPTEN__)\n#define O_PATH_9P_UTIL O_PATH"
+if source.count(anchor) != 1:
+    raise SystemExit("Unsupported upstream 9p O_PATH layout")
+path.write_text(source.replace(anchor, replacement, 1))
+print("Q2: use portable 9p file descriptor operations on Emscripten")
