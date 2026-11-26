@@ -154,7 +154,12 @@ const { master, slave } = openpty();
 terminal.loadAddon(master);
 window.q2BootMarker = false;
 window.q2Serial = '';
+let serialRefreshPending=false;
 terminal.onWriteParsed(() => {
+  if(serialRefreshPending)return;
+  serialRefreshPending=true;
+  setTimeout(()=>{
+  serialRefreshPending=false;
   const buffer = terminal.buffer.active;
   let lines = [];
   for (let i = Math.max(0, buffer.length - 10000); i < buffer.length; i++) {
@@ -173,6 +178,7 @@ terminal.onWriteParsed(() => {
     else if(serial.includes('Q2_DEMO_EXIT=')){status('Firmware process exited. Open developer console for details.');el('lcd').dataset.message='Firmware process exited';}
     else if(serial.includes('Q2_DEMO_ATTEMPT')&&!el('lcd').dataset.message){status('Firmware process starting; waiting for display output…');el('lcd').dataset.message='Waiting for firmware display';}
   }
+  },100);
 });
 async function get(name) {
   const response = await fetch(path(name), {cache:'no-store'});
@@ -223,7 +229,7 @@ start.addEventListener('click', async () => {
     const profile = el('clock').value;
     if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
     const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel',profile==='normal'?'tcg,thread=multi,tb-size=32':'tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init ieee754=relaxed panic=0 ignore_loglevel loglevel=8 initcall_debug printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel',profile==='normal'?'tcg,thread=multi,tb-size=32':'tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init ieee754=relaxed panic=0 loglevel=4 printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
     if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none','-virtfs','local,path=/q2sd,mount_tag=q2sd,security_model=none','-virtfs','local,path=/q2settings,mount_tag=q2settings,security_model=none');
     // IDE hard disks reject read-only backends. This file is a private MEMFS
     // copy; the guest mounts its SquashFS read-only and uses a tmpfs overlay.
