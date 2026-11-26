@@ -37,5 +37,7 @@ jobs:
           image=ghcr.io/lampsonlnguyen/q2-emulation/wasm-builder:v1
           if docker manifest inspect "$image" >/dev/null 2>&1; then echo "Version already published"; exit 0; fi
           bash wasm/builders/prepare-wasm.sh
+          # Verify the published builder can compile without network access.
+          bash wasm/build-mips.sh
           docker tag q2-wasm-builder:v1 "$image"
           docker push "$image"

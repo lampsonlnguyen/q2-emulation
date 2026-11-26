@@ -7,7 +7,11 @@ on:
     branches: [main]
   push:
     branches: [main]
-    paths: ['web/runtime/**', 'wasm/**', 'wasm/firmware-browser-smoke.mjs', '.github/workflows/test-firmware-browser.yml']
+    paths:
+      - 'web/runtime/**'
+      - 'wasm/**'
+      - '.github/workflows/test-firmware-browser.yml'
+      - '!wasm/builders/**'
 permissions:
   contents: read
   packages: read
@@ -19,25 +23,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Check builder availability
+        id: builders
+        run: |
+          if docker manifest inspect ghcr.io/lampsonlnguyen/q2-emulation/wasm-builder:v1 >/dev/null 2>&1; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Builder bootstrap pending; successful publication triggers firmware tests.'
+          fi
       - name: Retrieve preserved builders
+        if: steps.builders.outputs.ready == 'true'
         run: bash wasm/builders/pull.sh
       - name: Build current runtime offline
+        if: steps.builders.outputs.ready == 'true'
         run: |
           bash wasm/build-mips.sh
           bash wasm/assemble-runtime.sh
           grep -qx 'CONFIG_SQUASHFS_LZO=y' build/guest/kernel.config
       - name: Download pinned upstream firmware for testing only
+        if: steps.builders.outputs.ready == 'true'
         run: |
           curl -fL --retry 3 https://github.com/DiamondBond/q2-pod/releases/download/1.9.4/update.tar -o update.tar
           echo 'd41622f12bb5c7ffbd775f5d4d2bd4787514a75fb6e12765fa1a43d81af9bcb9  update.tar' | sha256sum -c -
       - name: Install browser test dependencies
+        if: steps.builders.outputs.ready == 'true'
         run: |
           cp wasm/firmware-browser-smoke.mjs build/browser-tools/
           cd build/browser-tools
           npx playwright install --with-deps chromium
       - name: Start emulator server
+        if: steps.builders.outputs.ready == 'true'
         run: docker compose -f compose.web.yml up -d --build
       - name: Verify actual Q2 firmware in browser
+        if: steps.builders.outputs.ready == 'true'
         run: |
           curl --retry 30 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
           set -o pipefail

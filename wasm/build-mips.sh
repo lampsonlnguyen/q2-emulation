@@ -101,7 +101,7 @@ printf '%s\n' "$backend" > "$out/backend.txt"
 # All dependencies and Meson downloads were retained in the builder.
 container="$(docker run -d --rm --network none -v "$work/qemu:/qemu:rw" "$builder")"
 flags='-O3 -g -Wno-error=unused-command-line-argument -matomics -mbulk-memory -DNDEBUG -DG_DISABLE_ASSERT -D_GNU_SOURCE -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sALLOW_TABLE_GROWTH -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc --js-library=/build/node_modules/xterm-pty/emscripten-pty.js -sEXPORT_ES6=1 -sASYNCIFY_IMPORTS=ffi_call_js'
-docker exec "$container" emconfigure /qemu/configure --static --target-list=mipsel-softmmu --cpu=wasm32 "${backend_flags[@]}" --cross-prefix= --without-default-features --enable-system --with-coroutine=fiber --enable-virtfs --extra-cflags="$flags" --extra-cxxflags="$flags" --extra-ldflags="-sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
+docker exec -w /build "$container" emconfigure /qemu/configure --static --target-list=mipsel-softmmu --cpu=wasm32 "${backend_flags[@]}" --cross-prefix= --without-default-features --enable-system --with-coroutine=fiber --enable-virtfs --extra-cflags="$flags" --extra-cxxflags="$flags" --extra-ldflags="-sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
 docker exec "$container" emmake make -j "${JOBS:-2}" qemu-system-mipsel
 docker cp "$container:/build/qemu-system-mipsel" "$out/out.js"
 docker cp "$container:/build/qemu-system-mipsel.wasm" "$out/"
