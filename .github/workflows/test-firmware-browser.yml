@@ -61,6 +61,19 @@ jobs:
           curl --retry 30 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
           set -o pipefail
           node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee firmware-browser.log
+      - name: Benchmark alternative clock profiles
+        if: steps.builders.outputs.ready == 'true'
+        run: |
+          set -o pipefail
+          for clock in normal icount; do
+            if Q2_CLOCK="$clock" node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee "firmware-browser-$clock.log"; then
+              echo "$clock: passed" >> "$GITHUB_STEP_SUMMARY"
+              grep Q2_BENCHMARK "firmware-browser-$clock.log" >> "$GITHUB_STEP_SUMMARY" || true
+            else
+              echo "$clock: failed (experimental profile)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          grep Q2_BENCHMARK firmware-browser.log >> "$GITHUB_STEP_SUMMARY" || true
       - name: Upload diagnostics (not firmware)
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,7 +81,8 @@ jobs:
           name: firmware-browser-diagnostics
           path: |
             firmware-browser.log
-            firmware-browser.png
+            firmware-browser-*.png
+            firmware-browser-*.log
           if-no-files-found: ignore
       - name: Stop server
         if: always()
