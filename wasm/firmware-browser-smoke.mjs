@@ -27,7 +27,7 @@ try {
       return {serial,status,nonblack,ready:document.getElementById('lcd').dataset.ready};
     });
     if(/Kernel panic|Q2_LAUNCH_RESULT=|Q2_DEMO_EXIT=|Q2_FW \[ERROR\]/.test(state.serial)||/Boot failed|QEMU aborted|Firmware launch failed/.test(state.status))throw Error('Firmware startup failed: '+state.status+'\n'+state.serial.slice(-6000));
-    if(state.serial.includes('Q2_DEMO_ATTEMPT')&&state.serial.includes('Q2_BRIDGE_READY')&&state.nonblack&&state.ready==='true'){success=true;break;}
+    if(state.serial.includes('Q2_9P_WRITE_READY')&&state.serial.includes('Q2_DEMO_ATTEMPT')&&state.serial.includes('Q2_BRIDGE_READY')&&state.nonblack&&state.ready==='true'){success=true;break;}
     await page.waitForTimeout(500);
   }
   assert.equal(success,true,'Firmware did not produce a visible frame before the deadline');

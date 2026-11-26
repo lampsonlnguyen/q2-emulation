@@ -85,6 +85,14 @@ standin usr/bin/hciconfig 'exit 0'
 log SHIM "Installed shim and watchdog/Bluetooth stand-ins; ABI compatibility not assumed"
 mkdir -p "$root/tmp/q2bridge"
 mount -t 9p -o trans=virtio,version=9p2000.L,cache=none q2bridge "$root/tmp/q2bridge" || fail "9p hardware transport mount failed"
+# Validate actual guest-side creation, read, rename and deletion before starting
+# the bridge. A missing path must be ENOENT, not a leaked WASI error number.
+probe="$root/tmp/q2bridge/.transport-probe"
+printf 'q2-9p-ok' > "$probe" || fail "9p create/write probe failed"
+[ "$(cat "$probe")" = q2-9p-ok ] || fail "9p read probe failed"
+mv "$probe" "$probe.renamed" || fail "9p rename probe failed"
+rm "$probe.renamed" || fail "9p unlink probe failed"
+echo Q2_9P_WRITE_READY
 if grep -qw q2.audio=1 /proc/cmdline; then
     # The ALSA file plugin writes raw samples to a FIFO; a capped relay publishes PCM.
     mkfifo "$root/tmp/q2emu/audio.fifo"

@@ -42,6 +42,7 @@ elif source.count(new) != 1:
     raise SystemExit("Unsupported upstream Malta FPGA console layout")
 print("Q2: Malta FPGA diagnostic console uses null backend")
 PY
+python3 "$root/wasm/patch-9p-errno.py" "$work/qemu"
 # Upstream initializes WASM translation state only in MTTCG. Icount uses RR.
 backend="${Q2_TCG_BACKEND:-wasm}"
 case "$backend" in

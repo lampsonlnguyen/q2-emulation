@@ -116,7 +116,7 @@ int main(int argc,char **argv) {
             unsigned char h[5]={'Q','2','F','1',(unsigned char)blank};
             if(shared) {
                 int output=open("/tmp/q2bridge/frame.tmp",O_WRONLY|O_CREAT|O_TRUNC,0644);
-                if(output<0){perror("frame open");return 1;}
+                if(output<0){int e=errno;fprintf(stderr,"frame open errno=%d: %s\n",e,strerror(e));return 1;}
                 int failed=full(output,h,sizeof(h),1)||full(output,snapshot,FRAME,1);
                 close(output);
                 if(failed||rename("/tmp/q2bridge/frame.tmp","/tmp/q2bridge/frame")){perror("frame publish");return 1;}
