@@ -4,7 +4,11 @@ ARG LINUX_VERSION=6.6.100
 ARG BUSYBOX_VERSION=1.36.1
 WORKDIR /work
 RUN curl -fL --retry 3 https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VERSION%%.*}.x/linux-${LINUX_VERSION}.tar.xz | tar -xJ
-RUN curl -fL --retry 3 https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2 | tar -xj
+RUN set -e; \
+    archive="/tmp/busybox.tar.bz2"; \
+    (curl -fsSL --connect-timeout 15 --max-time 90 --retry 2 -o "$archive" "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2" || \
+     curl -fsSL --connect-timeout 15 --max-time 90 --retry 2 -o "$archive" "https://sources.buildroot.net/busybox/busybox-${BUSYBOX_VERSION}.tar.bz2"); \
+    tar -xjf "$archive"; rm "$archive"
 RUN mkdir -p /rootfs/{bin,dev,proc,sys,tmp,mnt,run,etc} /out
 WORKDIR /work/busybox-${BUSYBOX_VERSION}
 RUN make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- defconfig && sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/CONFIG_TC=y/# CONFIG_TC is not set/' .config && make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- CC=mipsel-linux-gnu-gcc -j2 && make ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- CC=mipsel-linux-gnu-gcc CONFIG_PREFIX=/rootfs install && LC_ALL=C mipsel-linux-gnu-readelf -h /rootfs/bin/busybox > /tmp/busybox-elf && cat /tmp/busybox-elf && grep -Eq 'Class:[[:space:]]+ELF32' /tmp/busybox-elf && grep -Eq 'Machine:[[:space:]]+MIPS' /tmp/busybox-elf && grep -q 'little endian' /tmp/busybox-elf && mipsel-linux-gnu-readelf -A /rootfs/bin/busybox && mipsel-linux-gnu-readelf -l /rootfs/bin/busybox > /tmp/busybox-phdr && ! grep -q INTERP /tmp/busybox-phdr

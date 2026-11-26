@@ -1,7 +1,7 @@
 import {listReleases,downloadRelease,bundledReleases} from './releases.js?v=2';
 import {firmwareBytes,loadFiles,saveFiles,importFiles,populate,snapshot,loadSettings,saveSettings,loadFirmwareLibrary,saveFirmwareLibrary} from './storage.js';
 import {connectAudio} from './audio.js';
-import {log,connectHardware} from './session.js';
+import {log,connectHardware} from './session.js?v=3';
 const el = id => document.getElementById(id);
 const status = message => { el('status').textContent = message; log('STATUS',message); };
 const base = new URL('./', import.meta.url);

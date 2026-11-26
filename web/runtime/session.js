@@ -24,8 +24,10 @@ export function connectHardware(fs,instance) {
   let lastFrameCount=0;
   let wheel=100, previous=null, frameStamp=null, frames=0, sent=0, errors=0, lastStats=Date.now(), active=false, wheelBusy=false;
   const exists = name => fs.analyzePath(name).exists;
+  let lastInputWarning=0;
   function emit(device, events) {
-    if (!active || queue.length >= 256) {log('INPUT_DROP','Bridge not ready or queue full');return;}
+    if (!active || !el('lcd').matches('[data-ready=true]')) return;
+    if (queue.length >= 256) {if(Date.now()-lastInputWarning>2000){log('INPUT_DROP','Bridge input queue full');lastInputWarning=Date.now();}return;}
     const body=encodeEvents(events);
     const packet=new Uint8Array(body.length+3);
     packet.set([device,body.length&255,body.length>>8]);packet.set(body,3);
