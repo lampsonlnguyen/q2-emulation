@@ -37,6 +37,15 @@ mkdir -p "$root/sys/devices/i2c-0/0-0062" "$root/sys/class/power_supply/battery"
 echo 100 > "$root/sys/devices/i2c-0/0-0062/cw2015_capacity"
 echo 4200 > "$root/sys/devices/i2c-0/0-0062/cw2015_voltage"
 echo Full > "$root/sys/class/power_supply/battery/status"
+# These paths were identified in the pinned 1.9.4 firmware inventory.
+# Expose an unplugged virtual USB controller, not a mass-storage gadget.
+mkdir -p "$root/sys/class/udc/13500000.otg" "$root/sys/module/dwc2/parameters" "$root/sys/module/usb_f_mass_storage/parameters"
+printf '%s\n' 'not attached' > "$root/sys/class/udc/13500000.otg/state"
+printf '%s\n' 0 > "$root/sys/module/dwc2/parameters/pc_link"
+printf '%s\n' 0 > "$root/sys/module/usb_f_mass_storage/parameters/pc_check"
+# Linux power_supply voltage_now is expressed in microvolts.
+printf '%s\n' 4200000 > "$root/sys/class/power_supply/battery/voltage_now"
+log DEVICES "Synthetic USB disconnected and battery voltage available"
 for name in null zero random urandom tty; do
     touch "$root/dev/$name"
     mount --bind "/dev/$name" "$root/dev/$name" || fail "bind $name failed"
