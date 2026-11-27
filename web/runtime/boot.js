@@ -228,8 +228,14 @@ start.addEventListener('click', async () => {
     if (launch && !firmware) throw new Error('Select a firmware before requesting diagnostic launch');
     const profile = el('clock').value;
     if (!['icount','normal','fixed'].includes(profile)) throw new Error('Unknown clock profile: '+profile);
-    const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift=3,sleep=off' : 'shift=auto,sleep=off'];
-    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel',profile==='normal'?'tcg,thread=multi,tb-size=32':'tcg,thread=single,tb-size=32',...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init ieee754=relaxed panic=0 loglevel=4 printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
+    // Bounded experimental knobs; normal users retain the known-good defaults.
+    const params = new URLSearchParams(location.search);
+    const tbSize = params.get('tb') || '32';
+    const shift = params.get('shift') || '3';
+    if (!['32','64','128'].includes(tbSize)) throw new Error('Unsupported TB cache size: '+tbSize);
+    if (!['1','2','3','4','5'].includes(shift)) throw new Error('Unsupported fixed clock shift: '+shift);
+    const clock = profile === 'normal' ? [] : ['-icount',profile === 'fixed' ? 'shift='+shift+',sleep=off' : 'shift=auto,sleep=off'];
+    const args = ['-M','malta','-cpu','24Kf','-m','128M','-smp','1','-nodefaults','-display','none','-vga','none','-serial','stdio','-serial','null','-serial','null','-monitor','none','-nic','none','-accel','tcg,thread='+(profile==='normal'?'multi':'single')+',tb-size='+tbSize,...clock,'-kernel','/vmlinux','-initrd','/initramfs.cpio.gz','-append','console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 rdinit=/init ieee754=relaxed panic=0 loglevel=4 printk.time=1 nokaslr' + (launch ? ' q2.launch=1' + (el('audio-enable').checked?' q2.audio=1':'') : '')];
     if (launch) args.push('-virtfs','local,path=/q2bridge,mount_tag=q2bridge,security_model=none','-virtfs','local,path=/q2sd,mount_tag=q2sd,security_model=none','-virtfs','local,path=/q2settings,mount_tag=q2settings,security_model=none');
     // IDE hard disks reject read-only backends. This file is a private MEMFS
     // copy; the guest mounts its SquashFS read-only and uses a tmpfs overlay.
