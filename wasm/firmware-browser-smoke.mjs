@@ -6,11 +6,15 @@ const page = await browser.newPage();
 let error;
 const clock=process.env.Q2_CLOCK||'fixed';
 assert.ok(['fixed','normal','icount'].includes(clock));
+const tb=process.env.Q2_TB_SIZE||'32', shift=process.env.Q2_CLOCK_SHIFT||'3';
+assert.ok(['32','64','128'].includes(tb));
+assert.ok(['1','2','3','4','5'].includes(shift));
+const label=clock+'-tb'+tb+'-shift'+shift;
 let bootAt=0;
 page.on('console',m=>console.log('browser:',m.text()));
 page.on('pageerror',e=>{error=e;console.error(e);});
 try {
-  await page.goto('http://127.0.0.1:8080/runtime/?clock='+clock);
+  await page.goto('http://127.0.0.1:8080/runtime/?'+new URLSearchParams({clock,tb,shift}));
   await page.waitForFunction(()=>!document.getElementById('start').disabled);
   await page.locator('#firmware').setInputFiles(resolve(process.env.Q2_FIRMWARE||'update.tar'));
   await page.waitForFunction(()=>/Press Boot|Firmware rejected/.test(document.getElementById('firmware-status').textContent),{},{timeout:60000});
@@ -36,7 +40,7 @@ try {
   }
   assert.equal(success,true,'Firmware did not produce a visible frame before the deadline');
   console.log('Actual firmware launch and nonblack framebuffer verified');
-  console.log('Q2_BENCHMARK '+JSON.stringify({clock,firstVisibleMs:Date.now()-bootAt,linuxBoot:await page.locator('#boot-time').innerText()}));
+  console.log('Q2_BENCHMARK '+JSON.stringify({clock,tb,shift,firstVisibleMs:Date.now()-bootAt,linuxBoot:await page.locator('#boot-time').innerText()}));
   // Measure actual changed pixels after input, not merely the first boot frame.
   // Keep this diagnostic separate from the compatibility gate: firmware may
   // initially show a language chooser, a lock screen or a loading page.
@@ -66,9 +70,9 @@ try {
     samples.push({changed,elapsedMs:Date.now()-started,queued:await page.locator('#input-queue').innerText(),bridgeErrors:await page.locator('#bridge-errors').innerText()});
     await page.waitForTimeout(1000);
   }
-  console.log('Q2_INTERACTIVE '+JSON.stringify({clock,samples}));
+  console.log('Q2_INTERACTIVE '+JSON.stringify({clock,tb,shift,samples}));
 } finally {
   console.log(await page.evaluate(()=>window.q2Serial||'').catch(()=>''));
-  await page.screenshot({path:'firmware-browser-'+clock+'.png',fullPage:true}).catch(()=>{});
+  await page.screenshot({path:'firmware-browser-'+label+'.png',fullPage:true}).catch(()=>{});
   await browser.close();
 }
