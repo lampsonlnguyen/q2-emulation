@@ -37,6 +37,34 @@ try {
   assert.equal(success,true,'Firmware did not produce a visible frame before the deadline');
   console.log('Actual firmware launch and nonblack framebuffer verified');
   console.log('Q2_BENCHMARK '+JSON.stringify({clock,firstVisibleMs:Date.now()-bootAt,linuxBoot:await page.locator('#boot-time').innerText()}));
+  // Measure actual changed pixels after input, not merely the first boot frame.
+  // Keep this diagnostic separate from the compatibility gate: firmware may
+  // initially show a language chooser, a lock screen or a loading page.
+  async function frameSignature(){
+    return page.evaluate(()=>{
+      const c=document.getElementById('screen');
+      const p=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+      let hash=2166136261;
+      for(let i=0;i<p.length;i++)hash=Math.imul(hash^p[i],16777619);
+      return hash>>>0;
+    });
+  }
+  await page.waitForTimeout(5000);
+  const samples=[];
+  for(let i=0;i<3;i++){
+    const before=await frameSignature();
+    const started=Date.now();
+    await page.keyboard.press(i%2?'ArrowUp':'ArrowDown');
+    let changed=false;
+    while(Date.now()-started<15000){
+      if(error)throw error;
+      if(await frameSignature()!==before){changed=true;break;}
+      await page.waitForTimeout(100);
+    }
+    samples.push({changed,elapsedMs:Date.now()-started});
+    await page.waitForTimeout(1000);
+  }
+  console.log('Q2_INTERACTIVE '+JSON.stringify({clock,samples}));
 } finally {
   console.log(await page.evaluate(()=>window.q2Serial||'').catch(()=>''));
   await page.screenshot({path:'firmware-browser-'+clock+'.png',fullPage:true}).catch(()=>{});
