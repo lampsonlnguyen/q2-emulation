@@ -83,6 +83,8 @@ int main(int argc,char **argv) {
     unsigned char *previous=malloc(FRAME), *snapshot=malloc(FRAME);
     if(!previous||!snapshot)return 1;
     int first=1, lastblank=-1, partial_mode=0;
+    /* Negotiate once at startup; avoid a failed 9p lookup on every poll. */
+    if(shared) partial_mode=access("/tmp/q2bridge/partial-frames",F_OK)==0;
     for(;;) {
         accept_clients();
         struct pollfd p={fd,POLLIN,0};
@@ -92,13 +94,23 @@ int main(int argc,char **argv) {
         if(shared) {
             int input=open("/tmp/q2bridge/input",O_RDONLY);
             if(input>=0) {
-                unsigned char h[3], data[1024];
-                /* A shared file may contain up to 32 ordered input reports. */
-                for (unsigned report=0; report<32; report++) {
-                    if (full(input,h,3,0)) break;
-                    unsigned n=h[1]|(h[2]<<8);
-                    if(h[0]<1||h[0]>4||!n||n>sizeof(data)||n%16||full(input,data,n,0)) break;
-                    broadcast(h[0]-1,data,n);
+                /* Read the bounded batch locally instead of making two 9p
+                 * read requests for every individual input report. */
+                unsigned char batch[32*(3+1024)];
+                size_t used=0;
+                while(used<sizeof(batch)) {
+                    ssize_t n=read(input,batch+used,sizeof(batch)-used);
+                    if(n<0 && errno==EINTR) continue;
+                    if(n<=0) break;
+                    used+=(size_t)n;
+                }
+                size_t pos=0;
+                for(unsigned report=0;report<32 && used-pos>=3;report++) {
+                    unsigned device=batch[pos], n=batch[pos+1]|(batch[pos+2]<<8);
+                    pos+=3;
+                    if(device<1||device>4||!n||n>1024||n%16||n>used-pos) break;
+                    broadcast(device-1,batch+pos,n);
+                    pos+=n;
                 }
                 close(input); unlink("/tmp/q2bridge/input");
             }
@@ -113,9 +125,6 @@ int main(int argc,char **argv) {
             broadcast(h[0]-1,data,n);
         }
         if(p.revents&(POLLERR|POLLHUP|POLLNVAL))return 1;
-        if(shared && !partial_mode && access("/tmp/q2bridge/partial-frames",F_OK)==0) {
-            partial_mode=1; first=1;
-        }
         /* Never replace an unacknowledged delta: the browser must consume
          * every published baseline before the next delta is computed. */
         if(partial_mode && access("/tmp/q2bridge/frame",F_OK)==0) continue;
