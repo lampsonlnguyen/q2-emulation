@@ -177,14 +177,14 @@ while kill -0 "$demo_pid" 2>/dev/null; do
     if [ $((sample_tick % 5)) -eq 0 ]; then
         cat /proc/meminfo > "$root/tmp/q2bridge/meminfo.tmp" && mv "$root/tmp/q2bridge/meminfo.tmp" "$root/tmp/q2bridge/meminfo"
     fi
-    if [ $((sample_tick % 15)) -eq 0 ]; then
+    if [ $((sample_tick % 60)) -eq 0 ] && [ "$sample_tick" -ne 0 ]; then
         {
             echo "guest uptime: $(cat /proc/uptime)"
             cat /proc/loadavg
             for task in /proc/"$demo_pid"/task/*; do
                 [ -r "$task/stat" ] || continue
-                cat "$task/stat" 2>/dev/null || true
-                cat "$task/wchan" 2>/dev/null || true
+                IFS= read -r stat < "$task/stat" && printf "%s\n" "$stat"
+                IFS= read -r wchan < "$task/wchan" && printf "%s\n" "$wchan"
                 echo
             done
             ps
