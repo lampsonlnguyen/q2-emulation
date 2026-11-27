@@ -54,14 +54,16 @@ try {
   for(let i=0;i<3;i++){
     const before=await frameSignature();
     const started=Date.now();
-    await page.keyboard.press(i%2?'ArrowUp':'ArrowDown');
+    // The Boot button retains focus, and the runtime deliberately ignores
+    // keyboard events on buttons. Use the actual virtual wheel controls.
+    await page.locator(i%2?'#wheel-up':'#wheel-down').click();
     let changed=false;
     while(Date.now()-started<15000){
       if(error)throw error;
       if(await frameSignature()!==before){changed=true;break;}
       await page.waitForTimeout(100);
     }
-    samples.push({changed,elapsedMs:Date.now()-started});
+    samples.push({changed,elapsedMs:Date.now()-started,queued:await page.locator('#input-queue').innerText(),bridgeErrors:await page.locator('#bridge-errors').innerText()});
     await page.waitForTimeout(1000);
   }
   console.log('Q2_INTERACTIVE '+JSON.stringify({clock,samples}));
