@@ -1,9 +1,9 @@
 name: Deploy Q2 web
 on:
   workflow_run:
-    workflows: ['Publish preserved Q2 builders']
+    workflows: ['Publish preserved Q2 builders', 'Actual firmware browser smoke']
     types: [completed]
-    branches: [main]
+    branches: [main, web-performance-next]
   push:
     branches: [main]
     paths:
@@ -16,18 +16,21 @@ on:
 permissions:
   contents: read
   packages: read
+  actions: read
 concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
   build:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && ((github.event.workflow_run.name == 'Publish preserved Q2 builders' && github.event.workflow_run.head_branch == 'main') || (github.event.workflow_run.name == 'Actual firmware browser smoke' && github.event.workflow_run.head_branch == 'web-performance-next'))))
     outputs:
       ready: ${{ steps.builders.outputs.ready }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Check builder availability
         id: builders
@@ -54,6 +57,78 @@ jobs:
           cp -R web/. _site/
           for name in window home cover-flow folder; do cp "docs/$name.png" _site/assets/; done
           touch _site/.nojekyll
+      - name: Select latest tested experimental revision
+        id: preview_ref
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/test-firmware-browser.yml/runs" -f branch=web-performance-next -f status=success -f per_page=1 --jq '.workflow_runs[0].head_sha // empty')
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::No tested experimental revision"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Checkout tested experimental revision
+        id: preview_checkout
+        if: steps.preview_ref.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.preview_ref.outputs.sha }}
+          path: _preview_src
+      - name: Build and stage experimental preview
+        id: preview
+        if: steps.preview_checkout.outcome == 'success'
+        continue-on-error: true
+        working-directory: _preview_src
+        run: |
+          set -euo pipefail
+          bash wasm/build-mips.sh
+          bash wasm/assemble-runtime.sh
+          grep -qx 'CONFIG_SQUASHFS_LZO=y' build/guest/kernel.config
+          mkdir -p ../_preview_site/assets
+          cp -R web/. ../_preview_site/
+          for name in window home cover-flow folder; do cp "docs/$name.png" ../_preview_site/assets/; done
+          # Same origin, separate IndexedDB and browser session namespaces.
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import subprocess
+          root = Path("../_preview_site")
+          for file, keys in {
+              "runtime/storage.js": ["q2-browser-storage"],
+              "runtime/boot.js": ["q2-restart-firmware", "q2-shell"],
+              "runtime/index.html": ["q2-coi-reload"],
+          }.items():
+              p = root / file
+              s = p.read_text()
+              for key in keys:
+                  if key not in s:
+                      raise SystemExit("Missing preview storage namespace: " + key)
+                  s = s.replace(key, key + "-experimental")
+              if file == "runtime/index.html":
+                  s = s.replace("<title>Q2 Web Emulator</title>", "<title>Q2 Web Emulator - Experimental</title>")
+              p.write_text(s)
+          (root / "build-info.json").write_text(json.dumps({
+              "branch": "web-performance-next",
+              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          }) + "\n")
+          PY
+          mv ../_preview_site ../_site/experimental
+      - name: Protect existing deployment if preview build failed
+        env:
+          PREVIEW_OUTCOME: ${{ steps.preview.outcome }}
+          TRIGGER_WORKFLOW: ${{ github.event.workflow_run.name }}
+        run: |
+          if [[ "$PREVIEW_OUTCOME" != success ]]; then
+            if [[ "$TRIGGER_WORKFLOW" == 'Actual firmware browser smoke' ]]; then
+              echo "::error::Experimental preview build failed; leaving the current site unchanged"
+              exit 1
+            fi
+            echo "::warning::Experimental preview unavailable; publishing stable site only"
+          fi
+      - name: Record stable revision
+        run: |
+          printf '{"branch":"main","commit":"%s"}\n' "$(git rev-parse HEAD)" > _site/build-info.json
       - uses: actions/upload-pages-artifact@v3
         if: steps.builders.outputs.ready == 'true'
         with:
