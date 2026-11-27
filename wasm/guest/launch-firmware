@@ -91,6 +91,15 @@ touch "$root/sys/hynitron_debug/hyngescontrol"
 log DEVICES "Prepared virtual touch gesture control; USB gadget unavailable"
 # Offline control service mirrors the desktop socket protocol without claiming
 # internet access. Do not launch a real radio driver in the Malta guest.
+# A real kernel interface for the simulated Wi-Fi control plane. No default
+# route or fabricated internet connectivity: browser networking is separate.
+if ip link add wlan0 type dummy 2>/dev/null || [ -d /sys/class/net/wlan0 ]; then
+    ip link set wlan0 up || true
+    log WIFI "Virtual wlan0 interface present (offline)"
+    echo Q2_WLAN_READY
+else
+    log WIFI "Virtual wlan0 unavailable; retaining control-only mode"
+fi
 standin usr/sbin/wpa_supplicant 'exit 0'
 standin sbin/udhcpc 'exit 1'
 mkdir -p "$root/var/run/wpa_supplicant"
