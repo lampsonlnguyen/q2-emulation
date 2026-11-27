@@ -64,49 +64,7 @@ jobs:
             echo 'Device and sysfs paths referenced by demo:'
             unsquashfs -cat /tmp/q2-inspect.squashfs release/bin/demo | strings -a | grep -Eo '/(dev|sys)/[A-Za-z0-9_./-]+' | sort -u || true
             echo 'MPlayer and hardware-related filenames in firmware:'
-            unsquashfs -ll /tmp/q2-inspect.squashfs | grep -Ei '/[^/]*(mplayer|hciplayer|gpio|pwm|mtd_debug)[^/]*
-        if: steps.builders.outputs.ready == 'true'
-        run: |
-          cp wasm/firmware-browser-smoke.mjs build/browser-tools/
-          cd build/browser-tools
-          npx playwright install --with-deps chromium
-      - name: Start emulator server
-        if: steps.builders.outputs.ready == 'true'
-        run: docker compose -f compose.web.yml up -d --build
-      - name: Verify actual Q2 firmware in browser
-        if: steps.builders.outputs.ready == 'true'
-        run: |
-          curl --retry 30 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:8080/healthz
-          set -o pipefail
-          node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee firmware-browser.log
-      - name: Benchmark alternative clock profiles
-        if: steps.builders.outputs.ready == 'true'
-        run: |
-          set -o pipefail
-          for clock in normal icount; do
-            if Q2_CLOCK="$clock" node build/browser-tools/firmware-browser-smoke.mjs 2>&1 | tee "firmware-browser-$clock.log"; then
-              echo "$clock: passed" >> "$GITHUB_STEP_SUMMARY"
-              grep -E "Q2_BENCHMARK|Q2_INTERACTIVE" "firmware-browser-$clock.log" >> "$GITHUB_STEP_SUMMARY" || true
-            else
-              echo "$clock: failed (experimental profile)" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-          grep -E "Q2_BENCHMARK|Q2_INTERACTIVE" firmware-browser.log >> "$GITHUB_STEP_SUMMARY" || true
-      - name: Upload diagnostics (not firmware)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-browser-diagnostics
-          path: |
-            firmware-browser.log
-            firmware-browser-*.png
-            firmware-browser-*.log
-            firmware-hardware-inventory.log
-          if-no-files-found: ignore
-      - name: Stop server
-        if: always()
-        run: docker compose -f compose.web.yml down
- || true
+            unsquashfs -ll /tmp/q2-inspect.squashfs | grep -Ei '/[^/]*(mplayer|hciplayer|gpio|pwm|mtd_debug)[^/]*$' || true
           } | tee firmware-hardware-inventory.log
           rm -f /tmp/q2-inspect.squashfs
       - name: Install browser test dependencies
@@ -146,6 +104,7 @@ jobs:
             firmware-browser.log
             firmware-browser-*.png
             firmware-browser-*.log
+            firmware-hardware-inventory.log
           if-no-files-found: ignore
       - name: Stop server
         if: always()
