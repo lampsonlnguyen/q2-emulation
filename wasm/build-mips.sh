@@ -53,9 +53,9 @@ backend="${Q2_TCG_BACKEND:-wasm}"
 case "$backend" in
   wasm)
     python3 "$root/wasm/patch-wasm-rr.py" "$work/qemu"
-    # Experimental: promote frequently executed blocks to native WASM earlier.
-    # Preserve the upstream threshold via Q2_WASM_JIT_THRESHOLD=1500 for A/B runs.
-    python3 - "$work/qemu/tcg/wasm32.h" "${Q2_WASM_JIT_THRESHOLD:-500}" <<'PY'
+    # Keep the known-working promotion threshold; lower values are experimental.
+    # Threshold 500 caused firmware SIGSEGV in two browser CI runs.
+    python3 - "$work/qemu/tcg/wasm32.h" "${Q2_WASM_JIT_THRESHOLD:-1500}" <<'PY'
 import pathlib
 import sys
 path = pathlib.Path(sys.argv[1])
@@ -69,7 +69,7 @@ if source.count(anchor) != 1:
 path.write_text(source.replace(anchor, f"#define INSTANTIATE_NUM {threshold}", 1))
 print(f"Q2: WASM JIT promotion threshold {threshold}")
 PY
-    printf '%s\\n' "${Q2_WASM_JIT_THRESHOLD:-500}" > "$out/jit-threshold.txt"
+    printf '%s\\n' "${Q2_WASM_JIT_THRESHOLD:-1500}" > "$out/jit-threshold.txt"
     # TCG i32 extracts must truncate to 32 bits before shifting. Using i64
     # shifts with a 32-bit shift distance leaks high bits and breaks sign
     # extraction (e.g. MIPS SEH/SEB used by kernel pointer arithmetic).
