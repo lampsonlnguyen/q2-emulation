@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/mman.h>
+#include <sys/inotify.h>
+#include <time.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -37,6 +39,26 @@ static unsigned flag(const char *path) {
     FILE *f=fopen(path,"r");
     if(f){ if(fscanf(f,"%x",&n)!=1)n=0; fclose(f); }
     return n;
+}
+/* The framebuffer shim writes these flags on page flips and blanking.
+ * Watch local tmpfs only, not the 9p transport; periodic scans cover
+ * in-place framebuffer writes and missed or unsupported notifications. */
+static int display_changed(int watch) {
+    if(watch<0)return 1;
+    union { struct inotify_event align; unsigned char bytes[4096]; } buf;
+    int changed=0;
+    for(;;) {
+        ssize_t n=read(watch,buf.bytes,sizeof(buf.bytes));
+        if(n<0 && errno==EINTR)continue;
+        if(n<=0)break;
+        for(size_t pos=0;pos+sizeof(struct inotify_event)<=(size_t)n;) {
+            struct inotify_event *e=(void*)(buf.bytes+pos);
+            if(e->mask & (IN_Q_OVERFLOW|IN_IGNORED|IN_DELETE_SELF|IN_MOVE_SELF))changed=1;
+            if(e->len && (!strcmp(e->name,"fb.pan")||!strcmp(e->name,"fb.blank")||!strcmp(e->name,"fb.drawn")))changed=1;
+            pos+=sizeof(*e)+e->len;
+        }
+    }
+    return changed;
 }
 static int server(int i) {
     struct sockaddr_un a={.sun_family=AF_UNIX};
@@ -85,6 +107,14 @@ int main(int argc,char **argv) {
     int first=1, lastblank=-1, partial_mode=0;
     /* Negotiate once at startup; avoid a failed 9p lookup on every poll. */
     if(shared) partial_mode=access("/tmp/q2bridge/partial-frames",F_OK)==0;
+    int watch=-1;
+    if(shared && !partial_mode) {
+        watch=inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+        if(watch>=0 && inotify_add_watch(watch,"/tmp/q2emu",IN_CLOSE_WRITE|IN_MOVED_TO|IN_DELETE_SELF|IN_MOVE_SELF)<0) {
+            close(watch);watch=-1;
+        }
+    }
+    unsigned idle_polls=0;
     for(;;) {
         accept_clients();
         struct pollfd p={fd,POLLIN,0};
@@ -128,6 +158,11 @@ int main(int argc,char **argv) {
         /* Never replace an unacknowledged delta: the browser must consume
          * every published baseline before the next delta is computed. */
         if(partial_mode && access("/tmp/q2bridge/frame",F_OK)==0) continue;
+        /* Skip expensive full scans on idle cycles; force a scan at least
+         * every four cycles and after any display notification. */
+        int dirty=display_changed(watch);
+        if(!first && !dirty && ++idle_polls<4)continue;
+        idle_polls=0;
         unsigned page=flag("/tmp/q2emu/fb.pan")/375;
         if(page>1)page=0;
         int blank=!!flag("/tmp/q2emu/fb.blank");
